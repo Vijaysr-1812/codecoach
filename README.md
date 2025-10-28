@@ -1,5 +1,18 @@
 # 🚀 CodeLab  
 
+1. clone the repository
+2. cd into codecoach
+3. npm i
+4. npm run dev
+   !!! when running run on domain not on localhost to avoid the connection/rendering issues!!!
+
+
+
+
+
+
+
+
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)  
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-success?logo=fastapi)  
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20TS-61DBFB?logo=react)  
