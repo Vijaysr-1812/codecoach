@@ -1,4 +1,3 @@
-// --- ADD ALL THESE IMPORTS ---
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -17,9 +16,9 @@ import Leaderboard from "./pages/Leaderboard";
 import NotFound from "./pages/NotFound";
 import Layout from "./Layout";
 import Profile from "./pages/Profile";
-import { AuthProvider } from "./context/AuthProvider"; // My previous guide
-import ProtectedRoute from "./components/ProtectedRoute"; // My previous guide
-// --- END OF IMPORTS ---
+import RoadmapPage from "./pages/RoadmapPage"; // 1. Import the page
+import { AuthProvider } from "./context/AuthProvider";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -28,24 +27,23 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      {/* Wrap the entire app in AuthProvider */}
       <AuthProvider> 
         <BrowserRouter>
           <Routes>
-            {/* --- Public route outside the main layout --- */}
             <Route path="/login" element={<StudentLogin />} />
 
-            {/* --- Routes *inside* the main layout --- */}
             <Route element={<Layout />}>
-              {/* Public pages */}
               <Route path="/" element={<Index />} />
               <Route path="/about" element={<About />} />
               <Route path="/features" element={<Features />} />
               <Route path="/developers" element={<Developers />} />
 
-              {/* --- Protected Pages --- */}
               <Route element={<ProtectedRoute />}>
                 <Route path="/profile" element={<Profile />} />
+                
+                {/* 2. Add this Route line so the link works */}
+                <Route path="/roadmap" element={<RoadmapPage />} />
+                
                 <Route path="/practice" element={<Practice />} />
                 <Route path="/admin-dashboard" element={<AdminDashboard />} />
                 <Route path="/exam" element={<Exam />} />
@@ -53,7 +51,6 @@ const App = () => (
                 <Route path="/leaderboard" element={<Leaderboard />} />
               </Route>
 
-              {/* Catch-all 404 route */}
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

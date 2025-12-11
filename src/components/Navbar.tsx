@@ -1,8 +1,8 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Code, TerminalSquare, LogIn, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/hooks/useAuth'; // --- IMPORT AUTH HOOK ---
-import { supabase } from '@/lib/supabase'; // --- IMPORT SUPABASE CLIENT ---
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 
 const NavLink = ({ to, label }: { to: string; label: string }) => {
   const location = useLocation();
@@ -16,10 +16,8 @@ const NavLink = ({ to, label }: { to: string; label: string }) => {
 
 export default function Navbar() {
   const navigate = useNavigate();
-  // --- GET SESSION AND PROFILE FROM AUTH CONTEXT ---
   const { session, profile } = useAuth();
 
-  // --- HANDLE LOGOUT FUNCTION ---
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate('/'); // Navigate to home page after logout
@@ -37,7 +35,10 @@ export default function Navbar() {
           <NavLink to="/" label="Home" />
           <NavLink to="/features" label="Features" />
           <NavLink to="/about" label="About" />
-          <NavLink to="/practice" label="Practice" />
+          
+          {/* UPDATED: Points to /roadmap so users see their tree immediately */}
+          <NavLink to="/roadmap" label="Practice" />
+          
           <NavLink to="/exam" label="Examination" />
           <NavLink to="/analysis" label="Analysis" />
           <NavLink to="/leaderboard" label="Leaderboard" />
@@ -49,9 +50,7 @@ export default function Navbar() {
             <TerminalSquare className="h-5 w-5" />
           </Button>
 
-          {/* --- DYNAMIC LOGIN/LOGOUT BUTTONS (FIXED) --- */}
           {session ? (
-            // This div hides on small screens (sm) and shows as flex on medium+
             <div className="hidden sm:flex items-center gap-2">
               <Button variant="ghost" onClick={() => navigate('/profile')}>
                 <User className="h-4 w-4 mr-2" />
@@ -67,8 +66,6 @@ export default function Navbar() {
               <LogIn className="h-4 w-4 mr-2" /> Login
             </Button>
           )}
-          {/* --- END OF DYNAMIC BUTTONS --- */}
-
         </div>
       </div>
     </nav>

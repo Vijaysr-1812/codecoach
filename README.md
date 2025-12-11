@@ -1,5 +1,6 @@
 # 🚀 CodeLab  
 
+<<<<<<< HEAD
 1. clone the repository
 2. cd into codecoach
 3. npm i
@@ -13,6 +14,8 @@
 
 
 
+=======
+>>>>>>> a7a1e74d52174cf2c64029370e9d414844026e75
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)  
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-success?logo=fastapi)  
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20TS-61DBFB?logo=react)  
