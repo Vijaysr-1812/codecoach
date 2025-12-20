@@ -1,17 +1,10 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-// Simple animation replacement for framer-motion
-const motion = {
-  div: ({ children, className, ...props }: any) => <div className={className} {...props}>{children}</div>
-};
-const AnimatePresence = ({ children }: any) => <>{children}</>;
-// Mock auth hook - replace with actual auth service
-const useAuth = () => ({
-  user: { id: '1', name: 'Test User' },
-  isPending: false
-});
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase'; // Import Supabase
+
 import {
   Code2,
   ArrowLeft,
@@ -23,10 +16,39 @@ import {
   Play,
   Shield,
   Users,
-  BarChart3
+  BarChart3,
+  Map // Import Map icon
 } from 'lucide-react';
+
+// --- TYPE DEFINITIONS FOR ANIMATION MOCKS ---
+interface MotionProps extends React.HTMLAttributes<HTMLDivElement> {
+  initial?: object;
+  animate?: object;
+  exit?: object;
+}
+
+// Simple animation replacement for framer-motion
+const motion = {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  div: ({ children, className, initial, animate, exit, ...props }: MotionProps) => (
+    <div className={className} {...props}>
+      {children}
+    </div>
+  )
+};
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const AnimatePresence = ({ children, mode }: { children: React.ReactNode; mode?: string }) => <>{children}</>;
+
+interface CodeEditorProps {
+  initialCode: string;
+  language: string;
+  onCodeChange: (code: string) => void;
+  height: string;
+}
+
 // Simple CodeEditor replacement with per-language theme
-const CodeEditor = ({ initialCode, language, onCodeChange, height }: any) => {
+const CodeEditor = ({ initialCode, language, onCodeChange, height }: CodeEditorProps) => {
   const themeClass =
     language === 'python' ? 'bg-[#0d1117] text-[#e6edf3] border-[#30363d]' :
     language === 'javascript' ? 'bg-[#1e1e1e] text-[#dcdcaa] border-[#3c3c3c]' :
@@ -39,6 +61,7 @@ const CodeEditor = ({ initialCode, language, onCodeChange, height }: any) => {
       className={`w-full font-mono text-sm border rounded-lg p-4 resize-none focus:border-cyan-400 ${themeClass}`}
       style={{ height }}
       placeholder={`// Write your ${language} code here...`}
+      spellCheck="false"
     />
   );
 };
@@ -59,10 +82,19 @@ interface ExamQuestion {
   description: string;
   marks: number;
   difficulty: 'easy' | 'medium' | 'hard';
+  starterCode?: string;
   testCases: {
     input: string;
     expectedOutput: string;
   }[];
+}
+
+interface ExamResultDetail {
+  questionId: string;
+  title: string;
+  marks: number;
+  scored: number;
+  status: 'passed' | 'failed';
 }
 
 // Sample exam data
@@ -77,9 +109,17 @@ const sampleExam: ExamData = {
     {
       id: '1',
       title: 'Array Sum Problem',
-      description: 'Given an array of integers, find the sum of all elements.',
+      description: 'Given an array of integers "nums", find the sum of all elements.',
       marks: 30,
       difficulty: 'easy',
+      starterCode: `class Solution(object):
+    def arraySum(self, nums):
+        """
+        :type nums: List[int]
+        :rtype: int
+        """
+        # Write your logic here
+        return 0`,
       testCases: [
         { input: '[1, 2, 3, 4, 5]', expectedOutput: '15' },
         { input: '[-1, 0, 1]', expectedOutput: '0' }
@@ -88,20 +128,37 @@ const sampleExam: ExamData = {
     {
       id: '2',
       title: 'String Palindrome',
-      description: 'Check if a given string is a palindrome (reads the same forwards and backwards).',
+      description: 'Check if a given string "s" is a palindrome (reads the same forwards and backwards).',
       marks: 40,
       difficulty: 'medium',
+      starterCode: `class Solution(object):
+    def isPalindrome(self, s):
+        """
+        :type s: str
+        :rtype: bool
+        """
+        # Write your logic here
+        return "false"`,
       testCases: [
-        { input: 'racecar', expectedOutput: 'true' },
-        { input: 'hello', expectedOutput: 'false' }
+        { input: '"racecar"', expectedOutput: '"true"' },
+        { input: '"hello"', expectedOutput: '"false"' }
       ]
     },
     {
       id: '3',
       title: 'Binary Search',
-      description: 'Implement binary search algorithm to find target element in sorted array.',
+      description: 'Implement binary search algorithm to find "target" element in sorted array "arr". Return the index or -1.',
       marks: 30,
       difficulty: 'hard',
+      starterCode: `class Solution(object):
+    def search(self, arr, target):
+        """
+        :type arr: List[int]
+        :type target: int
+        :rtype: int
+        """
+        # Write your logic here
+        return -1`,
       testCases: [
         { input: 'arr=[1,2,3,4,5], target=3', expectedOutput: '2' },
         { input: 'arr=[1,2,3,4,5], target=6', expectedOutput: '-1' }
@@ -110,10 +167,31 @@ const sampleExam: ExamData = {
   ]
 };
 
+// Generic fallback templates
+const DEFAULT_TEMPLATES: Record<string, string> = {
+  python: `class Solution(object):
+    def solve(self, data):
+        """
+        :type data: any
+        :rtype: any
+        """
+        return 0`,
+  javascript: `/**
+ * @param {any} data
+ * @return {any}
+ */
+var solution = function(data) {
+    // Write your code here
+};`
+};
+
 type ExamState = 'preview' | 'active' | 'completed' | 'results';
 
 export default function ExaminationPage() {
-  const { user, isPending } = useAuth();
+  const { session, loading } = useAuth();
+  const user = session?.user;
+  const isPending = loading;
+
   const navigate = useNavigate();
   const [examState, setExamState] = useState<ExamState>('preview');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -122,7 +200,8 @@ export default function ExaminationPage() {
   
   const [isProctoring, setIsProctoring] = useState(false);
   const [proctoringWarnings, setProctoringWarnings] = useState(0);
-  const [examResults, setExamResults] = useState<{score: number, details: any[]}>({score: 0, details: []});
+  // Add level to exam results state
+  const [examResults, setExamResults] = useState<{score: number, level: string, details: ExamResultDetail[]}>({score: 0, level: 'Beginner', details: []});
   const [language, setLanguage] = useState('python');
   const [stdinInput, setStdinInput] = useState('');
   const [runnerOutput, setRunnerOutput] = useState('');
@@ -130,13 +209,27 @@ export default function ExaminationPage() {
   const [viva, setViva] = useState<string[]>([]);
   const [testResults, setTestResults] = useState<Array<{input:string; expected:string; got:string; pass:boolean}>>([]);
   const [cameraEnabled, setCameraEnabled] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+
+  // Keep track of passed test cases for real scoring
+  // { questionId: boolean (true if all test cases passed) }
+  const [questionPassStatus, setQuestionPassStatus] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!isPending && !user) {
       navigate('/login');
     }
   }, [user, isPending, navigate]);
+
+  // Pre-fill answers with specific starter code if available
+  useEffect(() => {
+    if (examState === 'active') {
+      const initialAnswers: Record<string, string> = {};
+      sampleExam.questions.forEach(q => {
+        initialAnswers[q.id] = q.starterCode || DEFAULT_TEMPLATES['python']; 
+      });
+      setAnswers(initialAnswers);
+    }
+  }, [examState]);
 
   // Timer effect
   useEffect(() => {
@@ -153,6 +246,7 @@ export default function ExaminationPage() {
 
       return () => clearInterval(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examState, timeRemaining]);
 
   // Proctoring simulation
@@ -192,12 +286,14 @@ export default function ExaminationPage() {
   }, [examState, isProctoring]);
 
   useEffect(() => {
+    let localStream: MediaStream | null = null;
+
     // Handle camera preview for live monitoring
     if (examState === 'active') {
       setCameraEnabled(true);
       navigator.mediaDevices?.getUserMedia?.({ video: true, audio: false })
         .then(stream => {
-          setCameraStream(stream);
+          localStream = stream;
           const video = document.getElementById('exam-live-camera') as HTMLVideoElement | null;
           if (video) {
             video.srcObject = stream;
@@ -210,8 +306,8 @@ export default function ExaminationPage() {
     }
 
     return () => {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(t => t.stop());
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
       }
     };
   }, [examState]);
@@ -234,21 +330,84 @@ export default function ExaminationPage() {
   };
 
   const handleSubmitExam = async () => {
+    if (!user) return;
+
     setExamState('completed');
     setIsProctoring(false);
     
-    // Simulate grading
-    setTimeout(() => {
-      const totalScore = Math.floor(Math.random() * 60) + 40; // 40-100 score
-      const details = sampleExam.questions.map(q => ({
-        questionId: q.id,
-        title: q.title,
-        marks: q.marks,
-        scored: Math.floor(Math.random() * q.marks * 0.8) + Math.floor(q.marks * 0.2),
-        status: Math.random() > 0.3 ? 'passed' : 'failed'
-      }));
+    // Simulate grading delay then process
+    setTimeout(async () => {
+      // 1. Calculate Score Based on REAL results
+      let totalScore = 0;
+      let totalQuestionsAnswered = 0;
+
+      const details = sampleExam.questions.map(q => {
+        const userAnswer = answers[q.id] || '';
+        const isAnswered = userAnswer.trim().length > 0 && !userAnswer.includes("return 0");
+        
+        if (isAnswered) {
+            totalQuestionsAnswered++;
+        }
+
+        const passed = questionPassStatus[q.id] === true;
+        const marksAwarded = passed ? q.marks : 0;
+        totalScore += marksAwarded;
+
+        return {
+          questionId: q.id,
+          title: q.title,
+          marks: q.marks,
+          scored: marksAwarded,
+          status: passed ? 'passed' : 'failed'
+        } as ExamResultDetail;
+      });
       
-      setExamResults({ score: totalScore, details });
+      if (totalQuestionsAnswered === 0) {
+          totalScore = 0;
+      }
+      
+      const percentageScore = Math.round((totalScore / sampleExam.totalMarks) * 100);
+
+      // 2. DETERMINE LEVEL based on score
+      let assignedLevel = 'Beginner';
+      if (percentageScore >= 80) assignedLevel = 'Expert';
+      else if (percentageScore >= 50) assignedLevel = 'Medium';
+
+      // 3. SAVE TO DATABASE
+      try {
+        // Save submission
+        const { error: subError } = await supabase
+          .from('exam_submissions')
+          .insert({
+            user_id: user.id,
+            // Assuming you have the exam ID in your exams table matching sampleExam.id
+            // If you are using the DB exam, you should use that ID. 
+            // For now we use a placeholder or sampleExam.id if it matches DB.
+            exam_id: sampleExam.id, 
+            score: totalScore,
+            total_marks: sampleExam.totalMarks,
+            assigned_level: assignedLevel,
+            answers: answers
+          });
+
+        if (subError) console.error('Submission error:', subError);
+
+        // Update Profile Level
+        const { error: profError } = await supabase
+          .from('profiles')
+          .update({ current_skill_level: assignedLevel })
+          .eq('id', user.id);
+
+        if (profError) console.error('Profile update error:', profError);
+
+        toast.success(`Exam Completed! You are placed in: ${assignedLevel}`);
+
+      } catch (err) {
+        console.error("Error saving exam results:", err);
+        toast.error("Failed to save results to database.");
+      }
+
+      setExamResults({ score: percentageScore, level: assignedLevel, details });
       setExamState('results');
     }, 3000);
   };
@@ -263,6 +422,84 @@ export default function ExaminationPage() {
 
   const currentQuestion = sampleExam.questions[currentQuestionIndex];
 
+  // Helper to generate driver code that handles class instantiation and input parsing
+  const generateDriverCode = (userCode: string, lang: string, input: string) => {
+    if (lang === 'python') {
+        const safeInput = input.replace(/"/g, '\\"');
+        return `
+import sys
+import json
+import re
+
+# --- USER SOLUTION ---
+${userCode}
+# ---------------------
+
+if __name__ == "__main__":
+    input_str = "${safeInput}"
+    data = None
+    
+    # 1. Parse Input
+    try:
+        # Try as JSON first
+        data = json.loads(input_str)
+    except:
+        # Try parsing "key=value" pairs
+        try:
+            if '=' in input_str:
+                data = {}
+                parts = re.split(r',\\s*(?![^\\[]*\\])', input_str)
+                for part in parts:
+                    if '=' in part:
+                        k, v = part.split('=', 1)
+                        try:
+                            data[k.strip()] = json.loads(v.strip())
+                        except:
+                            data[k.strip()] = v.strip()
+            else:
+                data = input_str
+        except:
+            data = input_str
+
+    # 2. Run Solution
+    try:
+        sol = Solution()
+        # Find the user defined method (excluding __init__, etc)
+        method_name = [m for m in dir(sol) if not m.startswith('__')][0]
+        method = getattr(sol, method_name)
+        
+        # Call method with unpacked dict or single arg
+        if isinstance(data, dict):
+            result = method(**data)
+        else:
+            result = method(data)
+            
+        # 3. Print Result
+        if isinstance(result, bool):
+            print("true" if result else "false")
+        elif isinstance(result, str):
+            print(f'"{result}"')
+        else:
+            print(json.dumps(result))
+            
+    except Exception as e:
+        print(f"Error: {str(e)}")
+`;
+    }
+    
+    // Basic JS handling (simplified for this demo)
+    if (lang === 'javascript') {
+        return `
+${userCode}
+
+const input = ${input.includes('=') ? '{}' : input}; // Simplified input handling for JS demo
+console.log(solution(input)); 
+`;
+    }
+    
+    return userCode;
+  };
+
   const runCode = async () => {
     const code = answers[currentQuestion.id] || '';
     if (!code.trim()) {
@@ -273,60 +510,69 @@ export default function ExaminationPage() {
     setIsRunning(true);
     setRunnerOutput('Running your code...\n');
 
-    try {
-      const response = await fetch('https://onecompiler-apis.p.rapidapi.com/api/v1/run', {
-        method: 'POST',
-        headers: {
-          'x-rapidapi-key': 'ead58a2ba3msh92dcc5cbcbf559ap11fc2fjsn5288ed507ac5',
-          'x-rapidapi-host': 'onecompiler-apis.p.rapidapi.com',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          language,
-          stdin: stdinInput,
-          files: [{
-            name: language === 'python' ? 'main.py' : language === 'javascript' ? 'main.js' : language === 'java' ? 'Main.java' : 'main.cpp',
-            content: code
-          }]
-        })
-      });
+    const testResultsTemp: { input: string; expected: string; got: string; pass: boolean }[] = [];
+    let allPassed = true;
 
-      const result = await response.json();
-      if (result.stdout) {
-        setRunnerOutput(result.stdout);
-      } else if (result.stderr) {
-        setRunnerOutput(`Error:\n${result.stderr}`);
-      } else {
-        setRunnerOutput('Code executed successfully! (No output)');
+    for (const testCase of currentQuestion.testCases) {
+      try {
+        const driverCode = generateDriverCode(code, language, testCase.input);
+
+        const response = await fetch('https://onecompiler-apis.p.rapidapi.com/api/v1/run', {
+          method: 'POST',
+          headers: {
+            'x-rapidapi-key': 'ead58a2ba3msh92dcc5cbcbf559ap11fc2fjsn5288ed507ac5',
+            'x-rapidapi-host': 'onecompiler-apis.p.rapidapi.com',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            language,
+            stdin: stdinInput,
+            files: [{
+              name: language === 'python' ? 'main.py' : 'main.js',
+              content: driverCode
+            }]
+          })
+        });
+
+        const result = await response.json();
+        const actualOutput = (result.stdout || result.stderr || '').trim();
+        const expectedOutput = testCase.expectedOutput.trim();
+        
+        // Loose equality for robust matching
+        // eslint-disable-next-line eqeqeq
+        const passed = actualOutput == expectedOutput;
+
+        if (!passed) allPassed = false;
+
+        testResultsTemp.push({
+            input: testCase.input,
+            expected: expectedOutput,
+            got: actualOutput,
+            pass: passed
+        });
+
+      } catch (error) {
+        allPassed = false;
+        testResultsTemp.push({
+            input: testCase.input,
+            expected: testCase.expectedOutput,
+            got: 'Execution Error',
+            pass: false
+        });
       }
-    } catch (error) {
-      setTimeout(() => {
-        if (language === 'python' && code.includes('print')) {
-          setRunnerOutput('Hello, CodeLab!\nCode executed successfully!');
-        } else {
-          setRunnerOutput('Hello, CodeLab!\nCode executed successfully!\n\nNote: This is a demo output.');
-        }
-      }, 1000);
     }
 
+    setTestResults(testResultsTemp);
     setIsRunning(false);
 
-    // Generate viva questions based on the problem
-    const prompts = [
-      `Explain time complexity for ${currentQuestion.title}.`,
-      `What edge cases would you test for ${currentQuestion.title}?`,
-      `How would you optimize memory usage in your approach?`
-    ];
-    setViva(prompts);
-
-    // Simulate test case validation from expected outputs
-    const synthetic = currentQuestion.testCases.map(tc => ({
-      input: tc.input,
-      expected: tc.expectedOutput,
-      got: runnerOutput.trim() || 'N/A',
-      pass: (runnerOutput || '').includes(tc.expectedOutput)
-    }));
-    setTestResults(synthetic);
+    if (allPassed) {
+        setRunnerOutput('All Test Cases Passed! 🎉');
+        setQuestionPassStatus(prev => ({ ...prev, [currentQuestion.id]: true }));
+        toast.success('Solution Accepted!');
+    } else {
+        setRunnerOutput('Some test cases failed.');
+        setQuestionPassStatus(prev => ({ ...prev, [currentQuestion.id]: false }));
+    }
   };
 
   if (isPending) {
@@ -663,10 +909,23 @@ export default function ExaminationPage() {
                     <BarChart3 className="w-12 h-12 text-white" />
                   </div>
                   <h1 className="text-4xl font-bold text-white mb-4">Exam Results</h1>
+                  
+                  {/* Score Display */}
                   <div className="text-6xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
                     {examResults.score}%
                   </div>
-                  <p className="text-xl text-gray-300">Great job on completing the exam!</p>
+                  
+                  {examResults.score === 0 ? (
+                    <p className="text-xl text-red-400 mt-2">
+                        You didn't answer any questions correctly or skipped them all.
+                    </p>
+                  ) : (
+                    <p className="text-xl text-gray-300">Great job on completing the exam!</p>
+                  )}
+                  
+                  <div className="text-xl text-white mt-4">
+                    Assigned Level: <span className="text-cyan-400 font-bold">{examResults.level}</span>
+                  </div>
                 </div>
 
                 {/* Detailed Results */}
@@ -683,7 +942,7 @@ export default function ExaminationPage() {
                             <XCircle className="w-4 h-4 text-red-400" />
                           )}
                           <span className={`text-sm ${result.status === 'passed' ? 'text-green-400' : 'text-red-400'}`}>
-                            {result.status === 'passed' ? 'Passed' : 'Failed'}
+                            {result.status === 'passed' ? 'Passed' : 'Failed / Not Answered'}
                           </span>
                         </div>
                       </div>
@@ -710,18 +969,18 @@ export default function ExaminationPage() {
                 </div>
 
                 <div className="text-center">
-                  <Link
-                    to="/profile"
-                  className="bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600 px-8 py-4 rounded-xl text-black font-semibold transition-all duration-300 transform hover:scale-105 inline-flex items-center space-x-2"
+                  <button
+                    onClick={() => navigate('/roadmap')}
+                    className="bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600 px-8 py-4 rounded-xl text-black font-semibold transition-all duration-300 transform hover:scale-105 inline-flex items-center space-x-2"
                   >
-                    <span>Back to Dashboard</span>
-                    <ArrowLeft className="w-5 h-5 rotate-180" />
-                  </Link>
-                <div className="mt-4">
-                  <Link to="/" className="inline-flex items-center px-6 py-3 rounded-xl border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10">
-                    <ArrowLeft className="w-4 h-4 mr-2" /> Back to Home
-                  </Link>
-                </div>
+                    <Map className="w-5 h-5 mr-2" />
+                    <span>View My {examResults.level} Roadmap</span>
+                  </button>
+                  <div className="mt-4">
+                    <Link to="/" className="inline-flex items-center px-6 py-3 rounded-xl border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10">
+                      <ArrowLeft className="w-4 h-4 mr-2" /> Back to Home
+                    </Link>
+                  </div>
                 </div>
               </div>
             </motion.div>
