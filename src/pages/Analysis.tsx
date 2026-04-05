@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { 
+import {
   Trophy, 
   TrendingUp, 
   Clock, 
@@ -15,6 +15,8 @@ import {
   Star
 } from 'lucide-react';
 import Particles from '@/components/Particles';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
 
 interface ExamResult {
   studentName: string;
@@ -23,28 +25,83 @@ interface ExamResult {
   speed: number;
   efficiency: number;
   completedAt: string;
+  level: string;
+  weakTopics: string[];
+  strongTopics: string[];
 }
 
 const Analysis = () => {
   const navigate = useNavigate();
+  const { session, profile } = useAuth();
   const [results, setResults] = useState<ExamResult | null>(null);
   const [rank, setRank] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const savedResults = localStorage.getItem('examResults');
-    if (savedResults) {
-      const parsedResults = JSON.parse(savedResults);
-      setResults(parsedResults);
-      
-      // Generate random rank based on score
-      const calculatedRank = Math.max(1, Math.floor((100 - parsedResults.score) / 5) + 1);
-      setRank(calculatedRank);
-    } else {
-      navigate('/login');
-    }
-  }, [navigate]);
+    const fetchLatestResult = async () => {
+      if (!session?.user) {
+        setResults({
+          studentName: profile?.username || 'User',
+          studentRoll: 'N/A',
+          score: 0,
+          speed: 0,
+          efficiency: 0,
+          completedAt: '',
+          level: 'Beginner',
+          weakTopics: [],
+          strongTopics: [],
+        });
+        setIsLoading(false);
+        return;
+      }
 
-  if (!results) {
+      setIsLoading(true);
+
+      const { data: submission, error } = await supabase
+        .from('exam_submissions')
+        .select('score, total_marks, percentage, assigned_level, answers, submitted_at')
+        .eq('user_id', session.user.id)
+        .order('submitted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Failed to fetch latest exam result:', error);
+      }
+
+      const totalMarks = submission?.total_marks || 0;
+      const normalizedScore =
+        typeof submission?.percentage === 'number'
+          ? submission.percentage
+          : submission && totalMarks > 0
+            ? Math.round((submission.score / totalMarks) * 100)
+            : 0;
+      const level = submission?.assigned_level || 'Beginner';
+      const weakTopics: string[] = [];
+      const strongTopics: string[] = [];
+      const fallbackRoll = session.user.id.slice(0, 8).toUpperCase();
+
+      const nextResults: ExamResult = {
+        studentName: profile?.username || 'User',
+        studentRoll: fallbackRoll,
+        score: normalizedScore,
+        speed: normalizedScore,
+        efficiency: normalizedScore,
+        completedAt: submission?.submitted_at || '',
+        level,
+        weakTopics,
+        strongTopics,
+      };
+
+      setResults(nextResults);
+      setRank(Math.max(1, Math.floor((100 - normalizedScore) / 5) + 1));
+      setIsLoading(false);
+    };
+
+    void fetchLatestResult();
+  }, [profile?.username, session?.user]);
+
+  if (isLoading || !results) {
     return <div>Loading...</div>;
   }
 

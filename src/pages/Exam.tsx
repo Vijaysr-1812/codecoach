@@ -4,6 +4,9 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase'; // Import Supabase
+import { runCodeViaBackend } from '@/lib/codeRunnerClient';
+import { saveExamResults } from '@/lib/examResults';
+import { loadExamDefinition } from '@/lib/examData';
 
 import {
   Code2,
@@ -29,16 +32,14 @@ interface MotionProps extends React.HTMLAttributes<HTMLDivElement> {
 
 // Simple animation replacement for framer-motion
 const motion = {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  div: ({ children, className, initial, animate, exit, ...props }: MotionProps) => (
+  div: ({ children, className, initial: _initial, animate: _animate, exit: _exit, ...props }: MotionProps) => (
     <div className={className} {...props}>
       {children}
     </div>
   )
 };
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const AnimatePresence = ({ children, mode }: { children: React.ReactNode; mode?: string }) => <>{children}</>;
+const AnimatePresence = ({ children, mode: _mode }: { children: React.ReactNode; mode?: string }) => <>{children}</>;
 
 interface CodeEditorProps {
   initialCode: string;
@@ -79,6 +80,8 @@ interface ExamData {
 interface ExamQuestion {
   id: string;
   title: string;
+  topic: string; // ✅ ADD THIS
+  executionType: 'array_int' | 'string_bool' | 'array_target';
   description: string;
   marks: number;
   difficulty: 'easy' | 'medium' | 'hard';
@@ -89,6 +92,7 @@ interface ExamQuestion {
   }[];
 }
 
+
 interface ExamResultDetail {
   questionId: string;
   title: string;
@@ -97,75 +101,7 @@ interface ExamResultDetail {
   status: 'passed' | 'failed';
 }
 
-// Sample exam data
-const sampleExam: ExamData = {
-  id: '1',
-  title: 'Data Structures & Algorithms Exam',
-  description: 'Comprehensive exam covering arrays, strings, and basic algorithms',
-  duration: 60,
-  totalMarks: 100,
-  isActive: true,
-  questions: [
-    {
-      id: '1',
-      title: 'Array Sum Problem',
-      description: 'Given an array of integers "nums", find the sum of all elements.',
-      marks: 30,
-      difficulty: 'easy',
-      starterCode: `class Solution(object):
-    def arraySum(self, nums):
-        """
-        :type nums: List[int]
-        :rtype: int
-        """
-        # Write your logic here
-        return 0`,
-      testCases: [
-        { input: '[1, 2, 3, 4, 5]', expectedOutput: '15' },
-        { input: '[-1, 0, 1]', expectedOutput: '0' }
-      ]
-    },
-    {
-      id: '2',
-      title: 'String Palindrome',
-      description: 'Check if a given string "s" is a palindrome (reads the same forwards and backwards).',
-      marks: 40,
-      difficulty: 'medium',
-      starterCode: `class Solution(object):
-    def isPalindrome(self, s):
-        """
-        :type s: str
-        :rtype: bool
-        """
-        # Write your logic here
-        return "false"`,
-      testCases: [
-        { input: '"racecar"', expectedOutput: '"true"' },
-        { input: '"hello"', expectedOutput: '"false"' }
-      ]
-    },
-    {
-      id: '3',
-      title: 'Binary Search',
-      description: 'Implement binary search algorithm to find "target" element in sorted array "arr". Return the index or -1.',
-      marks: 30,
-      difficulty: 'hard',
-      starterCode: `class Solution(object):
-    def search(self, arr, target):
-        """
-        :type arr: List[int]
-        :type target: int
-        :rtype: int
-        """
-        # Write your logic here
-        return -1`,
-      testCases: [
-        { input: 'arr=[1,2,3,4,5], target=3', expectedOutput: '2' },
-        { input: 'arr=[1,2,3,4,5], target=6', expectedOutput: '-1' }
-      ]
-    }
-  ]
-};
+const DEFAULT_EXAM_ID = 'default';
 
 // Generic fallback templates
 const DEFAULT_TEMPLATES: Record<string, string> = {
@@ -176,26 +112,30 @@ const DEFAULT_TEMPLATES: Record<string, string> = {
         :rtype: any
         """
         return 0`,
-  javascript: `/**
- * @param {any} data
- * @return {any}
- */
-var solution = function(data) {
+  javascript: `function solve(data) {
     // Write your code here
-};`
+  }`
 };
 
+const LANGUAGE_CONFIG: Record<string, { fileName: string }> = {
+  python: { fileName: 'main.py' },
+  javascript: { fileName: 'main.js' },
+  java: { fileName: 'Main.java' },
+  cpp: { fileName: 'main.cpp' }
+};
 type ExamState = 'preview' | 'active' | 'completed' | 'results';
 
 export default function ExaminationPage() {
-  const { session, loading } = useAuth();
+  const { session, loading, profile } = useAuth();
   const user = session?.user;
   const isPending = loading;
 
   const navigate = useNavigate();
+  const [exam, setExam] = useState<ExamData | null>(null);
+  const [isExamLoading, setIsExamLoading] = useState(true);
   const [examState, setExamState] = useState<ExamState>('preview');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [timeRemaining, setTimeRemaining] = useState(sampleExam.duration * 60); // in seconds
+  const [timeRemaining, setTimeRemaining] = useState(0); // in seconds
   const [answers, setAnswers] = useState<Record<string, string>>({});
   
   const [isProctoring, setIsProctoring] = useState(false);
@@ -214,6 +154,46 @@ export default function ExaminationPage() {
   // { questionId: boolean (true if all test cases passed) }
   const [questionPassStatus, setQuestionPassStatus] = useState<Record<string, boolean>>({});
 
+  const normalizeOutput = (value: string) =>
+    value
+      .replace(/\r\n/g, '\n')
+      .replace(/\s+/g, '')
+      .trim()
+      .toLowerCase();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadExam = async () => {
+      setIsExamLoading(true);
+
+      try {
+        const loadedExam = await loadExamDefinition(DEFAULT_EXAM_ID);
+
+        if (!isMounted) return;
+
+        setExam(loadedExam);
+        setCurrentQuestionIndex(0);
+        setTimeRemaining(loadedExam.duration * 60);
+      } catch (error) {
+        console.error('Failed to load exam definition:', error);
+
+        if (!isMounted) return;
+        setExam(null);
+      } finally {
+        if (isMounted) {
+          setIsExamLoading(false);
+        }
+      }
+    };
+
+    void loadExam();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!isPending && !user) {
       navigate('/login');
@@ -222,18 +202,18 @@ export default function ExaminationPage() {
 
   // Pre-fill answers with specific starter code if available
   useEffect(() => {
-    if (examState === 'active') {
+    if (examState === 'active' && exam) {
       const initialAnswers: Record<string, string> = {};
-      sampleExam.questions.forEach(q => {
+      exam.questions.forEach(q => {
         initialAnswers[q.id] = q.starterCode || DEFAULT_TEMPLATES['python']; 
       });
       setAnswers(initialAnswers);
     }
-  }, [examState]);
+  }, [exam, examState]);
 
   // Timer effect
   useEffect(() => {
-    if (examState === 'active' && timeRemaining > 0) {
+    if (examState === 'active' && exam && timeRemaining > 0) {
       const timer = setInterval(() => {
         setTimeRemaining(prev => {
           if (prev <= 1) {
@@ -247,7 +227,7 @@ export default function ExaminationPage() {
       return () => clearInterval(timer);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [examState, timeRemaining]);
+  }, [exam, examState, timeRemaining]);
 
   // Proctoring simulation
   useEffect(() => {
@@ -324,13 +304,14 @@ export default function ExaminationPage() {
   };
 
   const handleStartExam = () => {
+    if (!exam) return;
     setExamState('active');
     setIsProctoring(true);
-    setTimeRemaining(sampleExam.duration * 60);
+    setTimeRemaining(exam.duration * 60);
   };
 
   const handleSubmitExam = async () => {
-    if (!user) return;
+    if (!user || !exam) return;
 
     setExamState('completed');
     setIsProctoring(false);
@@ -341,7 +322,7 @@ export default function ExaminationPage() {
       let totalScore = 0;
       let totalQuestionsAnswered = 0;
 
-      const details = sampleExam.questions.map(q => {
+      const details = exam.questions.map(q => {
         const userAnswer = answers[q.id] || '';
         const isAnswered = userAnswer.trim().length > 0 && !userAnswer.includes("return 0");
         
@@ -366,8 +347,33 @@ export default function ExaminationPage() {
           totalScore = 0;
       }
       
-      const percentageScore = Math.round((totalScore / sampleExam.totalMarks) * 100);
+      const percentageScore = Math.round((totalScore / exam.totalMarks) * 100);
+   // 🔥 Topic Analysis
+const topicMap: Record<string, { total: number; correct: number }> = {};
 
+exam.questions.forEach(q => {
+  if (!topicMap[q.topic]) {
+    topicMap[q.topic] = { total: 0, correct: 0 };
+  }
+
+  topicMap[q.topic].total++;
+
+  if (questionPassStatus[q.id]) {
+    topicMap[q.topic].correct++;
+  }
+});
+
+const weakTopics: string[] = [];
+const strongTopics: string[] = [];
+
+Object.entries(topicMap).forEach(([topic, data]) => {
+  const acc = data.correct / data.total;
+
+  if (acc >= 0.7) strongTopics.push(topic);
+  else weakTopics.push(topic);
+});
+
+// ✅ SAVE IN LOCAL STORAGE (VERY IMPORTANT)
       // 2. DETERMINE LEVEL based on score
       let assignedLevel = 'Beginner';
       if (percentageScore >= 80) assignedLevel = 'Expert';
@@ -380,12 +386,8 @@ export default function ExaminationPage() {
           .from('exam_submissions')
           .insert({
             user_id: user.id,
-            // Assuming you have the exam ID in your exams table matching sampleExam.id
-            // If you are using the DB exam, you should use that ID. 
-            // For now we use a placeholder or sampleExam.id if it matches DB.
-            exam_id: sampleExam.id, 
             score: totalScore,
-            total_marks: sampleExam.totalMarks,
+            total_marks: exam.totalMarks,
             assigned_level: assignedLevel,
             answers: answers
           });
@@ -407,100 +409,257 @@ export default function ExaminationPage() {
         toast.error("Failed to save results to database.");
       }
 
+      let currentStudent: { name?: string; rollNumber?: string } = {};
+      try {
+        currentStudent = JSON.parse(localStorage.getItem('currentStudent') || '{}');
+      } catch (error) {
+        console.error('Failed to parse currentStudent from localStorage:', error);
+      }
+      const storedResults = {
+        studentName: profile?.username || currentStudent.name || 'User',
+        studentRoll: currentStudent.rollNumber || 'N/A',
+        score: percentageScore,
+        speed: Math.max(60, 100 - Math.round((proctoringWarnings / Math.max(exam.questions.length, 1)) * 10)),
+        efficiency: Math.max(
+          0,
+          Math.round(
+            (details.reduce((sum, item) => sum + item.scored, 0) / Math.max(exam.totalMarks, 1)) * 100
+          )
+        ),
+        completedAt: new Date().toISOString(),
+        level: assignedLevel,
+        weakTopics,
+        strongTopics,
+      };
+
+      saveExamResults(storedResults);
       setExamResults({ score: percentageScore, level: assignedLevel, details });
       setExamState('results');
     }, 3000);
   };
 
   const handleCodeChange = (code: string) => {
-    const currentQuestion = sampleExam.questions[currentQuestionIndex];
+    if (!exam) return;
+    const currentQuestion = exam.questions[currentQuestionIndex];
     setAnswers(prev => ({
       ...prev,
       [currentQuestion.id]: code
     }));
   };
 
-  const currentQuestion = sampleExam.questions[currentQuestionIndex];
+  const currentQuestion = exam?.questions[currentQuestionIndex];
+  const rankEstimate = Math.max(1, Math.floor((100 - examResults.score) / 5) + 1);
+function generateArrayIntDriver(
+  userCode: string,
+  lang: string,
+  input: string
+) {
 
-  // Helper to generate driver code that handles class instantiation and input parsing
-  const generateDriverCode = (userCode: string, lang: string, input: string) => {
-    if (lang === 'python') {
-        const safeInput = input.replace(/"/g, '\\"');
-        return `
-import sys
+  /* ===== PYTHON ===== */
+  if (lang === 'python') {
+  const safeInput = input.replace(/"/g, '\\"');
+  return `
 import json
-import re
 
-# --- USER SOLUTION ---
 ${userCode}
-# ---------------------
 
 if __name__ == "__main__":
-    input_str = "${safeInput}"
-    data = None
-    
-    # 1. Parse Input
-    try:
-        # Try as JSON first
-        data = json.loads(input_str)
-    except:
-        # Try parsing "key=value" pairs
-        try:
-            if '=' in input_str:
-                data = {}
-                parts = re.split(r',\\s*(?![^\\[]*\\])', input_str)
-                for part in parts:
-                    if '=' in part:
-                        k, v = part.split('=', 1)
-                        try:
-                            data[k.strip()] = json.loads(v.strip())
-                        except:
-                            data[k.strip()] = v.strip()
-            else:
-                data = input_str
-        except:
-            data = input_str
-
-    # 2. Run Solution
-    try:
-        sol = Solution()
-        # Find the user defined method (excluding __init__, etc)
-        method_name = [m for m in dir(sol) if not m.startswith('__')][0]
-        method = getattr(sol, method_name)
-        
-        # Call method with unpacked dict or single arg
-        if isinstance(data, dict):
-            result = method(**data)
-        else:
-            result = method(data)
-            
-        # 3. Print Result
-        if isinstance(result, bool):
-            print("true" if result else "false")
-        elif isinstance(result, str):
-            print(f'"{result}"')
-        else:
-            print(json.dumps(result))
-            
-    except Exception as e:
-        print(f"Error: {str(e)}")
+    nums = json.loads("${safeInput}")
+    sol = Solution()
+    print(sol.solve(nums))
 `;
-    }
-    
-    // Basic JS handling (simplified for this demo)
-    if (lang === 'javascript') {
-        return `
+}
+
+  /* ===== JAVASCRIPT ===== */
+  if (lang === 'javascript') {
+    return `
+${userCode}
+const nums = ${input};
+console.log(solve(nums));
+`;
+  }
+
+  /* ===== JAVA ===== */
+  if (lang === 'java') {
+    return `
+import java.util.*;
 ${userCode}
 
-const input = ${input.includes('=') ? '{}' : input}; // Simplified input handling for JS demo
-console.log(solution(input)); 
+public class Main {
+  static int[] parseArray(String s) {
+    s = s.replace("[","").replace("]","");
+    if (s.trim().isEmpty()) return new int[0];
+    String[] p = s.split(",");
+    int[] arr = new int[p.length];
+    for(int i=0;i<p.length;i++) arr[i]=Integer.parseInt(p[i].trim());
+    return arr;
+  }
+  public static void main(String[] args) {
+    int[] nums = parseArray("${input}");
+    Solution sol = new Solution();
+    System.out.println(sol.solve(nums));
+  }
+}
 `;
-    }
-    
-    return userCode;
-  };
+  }
+
+  /* ===== C++ ===== */
+  if (lang === 'cpp') {
+    return `
+#include <bits/stdc++.h>
+using namespace std;
+${userCode}
+int main(){
+  vector<int> nums = ${input};
+  cout << solve(nums);
+  return 0;
+}
+`;
+  }
+  throw new Error('Unsupported language');
+}
+function generateStringBoolDriver(
+  userCode: string,
+  lang: string,
+  input: string
+) {
+
+if (lang === 'python') {
+  return `
+${userCode}
+if __name__ == "__main__":
+    sol = Solution()
+    print("true" if sol.solve(${input}) else "false")
+`;
+}
+
+
+  if (lang === 'javascript') {
+    return `
+${userCode}
+console.log(solve(${input}));
+`;
+  }
+
+  if (lang === 'java') {
+    return `
+${userCode}
+public class Main {
+  public static void main(String[] args) {
+    Solution sol = new Solution();
+    System.out.println(sol.solve(${input}));
+  }
+}
+`;
+  }
+
+  if (lang === 'cpp') {
+    return `
+#include <bits/stdc++.h>
+using namespace std;
+${userCode}
+int main() {
+  cout << (solve(${input}) ? "true" : "false");
+  return 0;
+}
+`;
+  }
+  throw new Error('Unsupported language');
+}
+function generateArrayTargetDriver(
+  userCode: string,
+  lang: string,
+  input: string
+) {
+
+  const arrPart = input.split(',')[0].split('=')[1];
+  const targetPart = input.split(',')[1].split('=')[1];
+
+if (lang === 'python') {
+  return `
+import json
+${userCode}
+if __name__ == "__main__":
+    arr = json.loads('${arrPart}')
+    target = ${targetPart}
+    sol = Solution()
+    print(sol.solve(arr, target))
+`;
+}
+
+  if (lang === 'javascript') {
+    return `
+${userCode}
+const arr = ${arrPart};
+const target = ${targetPart};
+console.log(solve(arr, target));
+`;
+  }
+
+  if (lang === 'java') {
+    return `
+import java.util.*;
+${userCode}
+public class Main {
+  static int[] parse(String s){
+    s=s.replace("[","").replace("]","");
+    String[] p=s.split(",");
+    int[] a=new int[p.length];
+    for(int i=0;i<p.length;i++) a[i]=Integer.parseInt(p[i].trim());
+    return a;
+  }
+  public static void main(String[] args){
+    int[] arr = parse("${arrPart}");
+    int target = ${targetPart};
+    Solution sol = new Solution();
+    System.out.println(sol.solve(arr, target));
+  }
+}
+`;
+  }
+
+  if (lang === 'cpp') {
+    return `
+#include <bits/stdc++.h>
+using namespace std;
+${userCode}
+int main(){
+  vector<int> arr = ${arrPart};
+  int target = ${targetPart};
+  cout << solve(arr, target);
+  return 0;
+}
+`;
+  }
+  throw new Error('Unsupported language');
+}
+
+  // Helper to generate driver code that handles class instantiation and input parsing
+const generateDriverCode = (
+  userCode: string,
+  lang: string,
+  input: string,
+  executionType: string
+) => {
+
+  if (executionType === 'array_int') {
+    return generateArrayIntDriver(userCode, lang, input);
+  }
+
+  if (executionType === 'string_bool') {
+    return generateStringBoolDriver(userCode, lang, input);
+  }
+
+  if (executionType === 'array_target') {
+    return generateArrayTargetDriver(userCode, lang, input);
+  }
+
+  throw new Error('Unsupported execution type');
+};
+
 
   const runCode = async () => {
+    if (!currentQuestion) return;
     const code = answers[currentQuestion.id] || '';
     if (!code.trim()) {
       toast.error('Please write some code first');
@@ -515,32 +674,22 @@ console.log(solution(input));
 
     for (const testCase of currentQuestion.testCases) {
       try {
-        const driverCode = generateDriverCode(code, language, testCase.input);
+        const driverCode = generateDriverCode(
+        code,
+        language,
+        testCase.input,
+        currentQuestion.executionType
+);
 
-        const response = await fetch('https://onecompiler-apis.p.rapidapi.com/api/v1/run', {
-          method: 'POST',
-          headers: {
-            'x-rapidapi-key': 'ead58a2ba3msh92dcc5cbcbf559ap11fc2fjsn5288ed507ac5',
-            'x-rapidapi-host': 'onecompiler-apis.p.rapidapi.com',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            language,
-            stdin: stdinInput,
-            files: [{
-              name: language === 'python' ? 'main.py' : 'main.js',
-              content: driverCode
-            }]
-          })
+
+        const result = await runCodeViaBackend({
+          code: driverCode,
+          language,
+          input: stdinInput,
         });
-
-        const result = await response.json();
-        const actualOutput = (result.stdout || result.stderr || '').trim();
+        const actualOutput = (result.output || result.error || '').trim();
         const expectedOutput = testCase.expectedOutput.trim();
-        
-        // Loose equality for robust matching
-        // eslint-disable-next-line eqeqeq
-        const passed = actualOutput == expectedOutput;
+        const passed = normalizeOutput(actualOutput) === normalizeOutput(expectedOutput);
 
         if (!passed) allPassed = false;
 
@@ -556,7 +705,7 @@ console.log(solution(input));
         testResultsTemp.push({
             input: testCase.input,
             expected: testCase.expectedOutput,
-            got: 'Execution Error',
+            got: error instanceof Error ? error.message : 'Execution Error',
             pass: false
         });
       }
@@ -575,7 +724,7 @@ console.log(solution(input));
     }
   };
 
-  if (isPending) {
+  if (isPending || isExamLoading || !exam || !currentQuestion) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400"></div>
@@ -645,23 +794,23 @@ console.log(solution(input));
             >
               <div className="bg-slate-900/40 backdrop-blur-lg rounded-3xl border border-cyan-500/20 p-8">
                 <div className="text-center mb-8">
-                  <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-green-400 bg-clip-text text-transparent mb-4">{sampleExam.title}</h1>
-                  <p className="text-xl text-gray-300 mb-6">{sampleExam.description}</p>
+                  <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-green-400 bg-clip-text text-transparent mb-4">{exam.title}</h1>
+                  <p className="text-xl text-gray-300 mb-6">{exam.description}</p>
                   
                   <div className="grid md:grid-cols-3 gap-6 mb-8">
                     <div className="bg-slate-800/40 rounded-xl p-4 border border-cyan-500/20">
                       <Clock className="w-8 h-8 text-cyan-400 mx-auto mb-2" />
-                      <div className="text-2xl font-bold text-white">{sampleExam.duration} min</div>
+                      <div className="text-2xl font-bold text-white">{exam.duration} min</div>
                       <div className="text-gray-400">Duration</div>
                     </div>
                     <div className="bg-slate-800/40 rounded-xl p-4 border border-cyan-500/20">
                       <Target className="w-8 h-8 text-green-400 mx-auto mb-2" />
-                      <div className="text-2xl font-bold text-white">{sampleExam.totalMarks}</div>
+                      <div className="text-2xl font-bold text-white">{exam.totalMarks}</div>
                       <div className="text-gray-400">Total Marks</div>
                     </div>
                     <div className="bg-slate-800/40 rounded-xl p-4 border border-cyan-500/20">
                       <Code2 className="w-8 h-8 text-cyan-300 mx-auto mb-2" />
-                      <div className="text-2xl font-bold text-white">{sampleExam.questions.length}</div>
+                      <div className="text-2xl font-bold text-white">{exam.questions.length}</div>
                       <div className="text-gray-400">Questions</div>
                     </div>
                   </div>
@@ -689,7 +838,7 @@ console.log(solution(input));
                 <div className="mb-8">
                   <h3 className="text-xl font-semibold text-white mb-4">Questions Overview</h3>
                   <div className="space-y-4">
-                    {sampleExam.questions.map((question, index) => (
+                    {exam.questions.map((question, index) => (
                       <div key={question.id} className="bg-slate-800/40 border border-cyan-500/20 rounded-xl p-4 flex justify-between items-center">
                         <div>
                           <h4 className="font-semibold text-white">Q{index + 1}. {question.title}</h4>
@@ -736,7 +885,7 @@ console.log(solution(input));
                 <div className="p-6 border-b border-white/10">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-bold text-white">
-                      Question {currentQuestionIndex + 1} of {sampleExam.questions.length}
+                      Question {currentQuestionIndex + 1} of {exam.questions.length}
                     </h2>
                     <span className="text-lg font-bold text-cyan-300">
                       {currentQuestion.marks} pts
@@ -780,8 +929,8 @@ console.log(solution(input));
                       Previous
                     </button>
                     <button
-                      onClick={() => setCurrentQuestionIndex(prev => Math.min(sampleExam.questions.length - 1, prev + 1))}
-                      disabled={currentQuestionIndex === sampleExam.questions.length - 1}
+                      onClick={() => setCurrentQuestionIndex(prev => Math.min(exam.questions.length - 1, prev + 1))}
+                      disabled={currentQuestionIndex === exam.questions.length - 1}
                       className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
                     >
                       Next
@@ -963,8 +1112,8 @@ console.log(solution(input));
                     <h3 className="text-lg font-semibold text-white">Your Ranking</h3>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-purple-400 mb-2">#12</div>
-                    <p className="text-gray-300">out of 156 participants</p>
+                    <div className="text-3xl font-bold text-purple-400 mb-2">#{rankEstimate}</div>
+                    <p className="text-gray-300">Estimated from your current score</p>
                   </div>
                 </div>
 

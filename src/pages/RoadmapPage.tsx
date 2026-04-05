@@ -1,3 +1,4 @@
+import { generateAdaptiveRoadmap } from "@/utils/adaptiveRoadmap";
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -6,6 +7,7 @@ import { Loader2, ArrowLeft, Map, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROADMAP_DATA } from '@/data/roadmapData';
 import RoadmapTree from '@/components/RoadmapTree';
+import { loadExamResults } from '@/lib/examResults';
 
 export default function RoadmapPage() {
   const { session } = useAuth();
@@ -13,30 +15,28 @@ export default function RoadmapPage() {
   const [level, setLevel] = useState<string | null>(null);
   const [completedTopics, setCompletedTopics] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const examResults = loadExamResults();
 
   useEffect(() => {
     const fetchData = async () => {
       if (!session?.user) return;
-      
+
       try {
-        // 1. Get Level
         const { data: profile } = await supabase
           .from('profiles')
           .select('current_skill_level')
           .eq('id', session.user.id)
           .single();
 
-        // 2. Get Completed Topics from our new progress table
         const { data: progress } = await supabase
           .from('topic_progress')
           .select('topic_id')
           .eq('user_id', session.user.id);
 
         setLevel(profile?.current_skill_level || 'Beginner');
-        
+
         if (progress) {
-          // Extract just the IDs into a simple array
-          setCompletedTopics(progress.map(p => p.topic_id));
+          setCompletedTopics(progress.map((item) => item.topic_id));
         }
       } catch (error) {
         console.error('Error fetching roadmap data:', error);
@@ -56,16 +56,16 @@ export default function RoadmapPage() {
     );
   }
 
-  // Select the correct roadmap data based on level, fallback to Beginner
-  const roadmapData = ROADMAP_DATA[level || 'Beginner'] || ROADMAP_DATA['Beginner'];
+  const score = examResults?.score || 0;
+  const baseRoadmap = ROADMAP_DATA[level || "Beginner"] || ROADMAP_DATA["Beginner"];
+  const roadmapData = generateAdaptiveRoadmap(baseRoadmap, score);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 text-white">
-      {/* Header */}
       <header className="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-cyan-500/20 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             onClick={() => navigate('/profile')}
             className="text-cyan-300 hover:text-white hover:bg-cyan-500/10"
           >
@@ -84,9 +84,18 @@ export default function RoadmapPage() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center mb-12">
+          {examResults && (
+            <div className="mb-6 text-center">
+              <p className="text-red-400">
+                Weak Topics: {examResults.weakTopics.length > 0 ? examResults.weakTopics.join(', ') : 'None identified yet'}
+              </p>
+              <p className="text-green-400">
+                Strong Topics: {examResults.strongTopics.length > 0 ? examResults.strongTopics.join(', ') : 'None identified yet'}
+              </p>
+            </div>
+          )}
           <h2 className="text-3xl md:text-4xl font-bold mb-4 bg-gradient-to-r from-cyan-400 to-green-400 bg-clip-text text-transparent">
             Your Personalized Roadmap
           </h2>
@@ -95,7 +104,6 @@ export default function RoadmapPage() {
           </p>
         </div>
 
-        {/* Render the Tree with data and completion status */}
         <RoadmapTree data={roadmapData} completedIds={completedTopics} />
       </main>
     </div>

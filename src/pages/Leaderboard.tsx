@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { 
+import {
   Trophy, 
   Medal, 
   Award, 
@@ -15,9 +15,12 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import Particles from '@/components/Particles';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
 
 interface LeaderboardEntry {
   rank: number;
+  userId: string;
   name: string;
   rollNumber: string;
   score: number;
@@ -26,85 +29,99 @@ interface LeaderboardEntry {
   completedAt: string;
 }
 
+const normalizeScore = (score: number, totalMarks: number | null, percentage?: number | null) => {
+  if (typeof percentage === 'number') {
+    return percentage;
+  }
+
+  return totalMarks && totalMarks > 0
+    ? Math.round((score / totalMarks) * 100)
+    : score;
+};
+
 const Leaderboard = () => {
   const navigate = useNavigate();
+  const { session } = useAuth();
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [currentUser, setCurrentUser] = useState<LeaderboardEntry | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Generate mock leaderboard data
-    const generateLeaderboard = () => {
-      const names = [
-        'Alex Johnson', 'Sarah Chen', 'Michael Brown', 'Emily Davis', 
-        'David Wilson', 'Lisa Wang', 'James Miller', 'Anna Rodriguez',
-        'Kevin Lee', 'Maya Patel', 'Ryan Taylor', 'Zoe Kim'
-      ];
-      
-      const rollNumbers = [
-        'CS001', 'CS002', 'CS003', 'CS004', 'CS005', 'CS006',
-        'CS007', 'CS008', 'CS009', 'CS010', 'CS011', 'CS012'
-      ];
+    const fetchLeaderboard = async () => {
+      setIsLoading(true);
 
-      const mockData: LeaderboardEntry[] = [];
-      
-      // Add current user from exam results
-      const savedResults = localStorage.getItem('examResults');
-      if (savedResults) {
-        const results = JSON.parse(savedResults);
-        const userRank = Math.max(1, Math.floor((100 - results.score) / 5) + 1);
-        
-        const userEntry: LeaderboardEntry = {
-          rank: userRank,
-          name: results.studentName,
-          rollNumber: results.studentRoll,
-          score: results.score,
-          speed: results.speed,
-          efficiency: results.efficiency,
-          completedAt: results.completedAt
-        };
-        
-        setCurrentUser(userEntry);
+      const { data: submissions, error } = await supabase
+        .from('exam_submissions')
+        .select('user_id, score, total_marks, percentage, submitted_at')
+        .order('submitted_at', { ascending: true });
+
+      if (error) {
+        console.error('Failed to fetch leaderboard data:', error);
+        setLeaderboard([]);
+        setCurrentUser(null);
+        setIsLoading(false);
+        return;
       }
 
-      // Generate other entries
-      for (let i = 0; i < 12; i++) {
-        const score = Math.floor(Math.random() * 30) + 70; // 70-100
-        mockData.push({
-          rank: i + 1,
-          name: names[i],
-          rollNumber: rollNumbers[i],
-          score: score,
-          speed: Math.floor(Math.random() * 40) + 60,
-          efficiency: Math.floor(Math.random() * 35) + 65,
-          completedAt: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString()
-        });
-      }
+      const bestSubmissionByUser = new Map<string, { user_id: string; score: number; total_marks: number | null; percentage?: number | null; submitted_at: string | null }>();
 
-      // Sort by score
-      mockData.sort((a, b) => b.score - a.score);
-      
-      // Update ranks
-      mockData.forEach((entry, index) => {
-        entry.rank = index + 1;
+      (submissions || []).forEach((submission) => {
+        const existing = bestSubmissionByUser.get(submission.user_id);
+
+        const submissionScore = normalizeScore(submission.score, submission.total_marks, submission.percentage);
+        const existingScore = existing ? normalizeScore(existing.score, existing.total_marks, existing.percentage) : -1;
+
+        if (!existing || submissionScore > existingScore) {
+          bestSubmissionByUser.set(submission.user_id, submission);
+        }
       });
 
-      // Insert current user if they have results
-      if (currentUser) {
-        const userRankIndex = mockData.findIndex(entry => entry.score <= currentUser.score);
-        if (userRankIndex !== -1) {
-          mockData.splice(userRankIndex, 0, currentUser);
-          // Re-rank
-          mockData.forEach((entry, index) => {
-            entry.rank = index + 1;
-          });
+      const userIds = Array.from(bestSubmissionByUser.keys());
+      let profileMap = new Map<string, { username?: string | null }>();
+
+      if (userIds.length > 0) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id, username')
+          .in('id', userIds);
+
+        if (profilesError) {
+          console.error('Failed to fetch leaderboard profiles:', profilesError);
+        } else {
+          profileMap = new Map((profiles || []).map((profile) => [profile.id, profile]));
         }
       }
 
-      setLeaderboard(mockData.slice(0, 10)); // Top 10
+      const rankedEntries = Array.from(bestSubmissionByUser.values())
+        .sort(
+          (a, b) =>
+            normalizeScore(b.score, b.total_marks, b.percentage) - normalizeScore(a.score, a.total_marks, a.percentage)
+        )
+        .map((submission, index) => {
+          const normalizedScore = normalizeScore(submission.score, submission.total_marks, submission.percentage);
+          const profile = profileMap.get(submission.user_id);
+
+          return {
+            rank: index + 1,
+            userId: submission.user_id,
+            name: profile?.username || 'User',
+            rollNumber: submission.user_id.slice(0, 8).toUpperCase(),
+            score: normalizedScore,
+            speed: normalizedScore,
+            efficiency: normalizedScore,
+            completedAt: submission.submitted_at || '',
+          };
+        });
+
+      setLeaderboard(rankedEntries);
+      setCurrentUser(
+        rankedEntries.find((entry) => entry.userId === session?.user?.id) || null
+      );
+      setIsLoading(false);
     };
 
-    generateLeaderboard();
-  }, []);
+    void fetchLeaderboard();
+  }, [session?.user?.id]);
 
   const getRankIcon = (rank: number) => {
     switch (rank) {
@@ -133,7 +150,7 @@ const Leaderboard = () => {
   };
 
   const isCurrentUser = (entry: LeaderboardEntry) => {
-    return currentUser && entry.rollNumber === currentUser.rollNumber;
+    return currentUser ? entry.userId === currentUser.userId : false;
   };
 
   return (
@@ -158,9 +175,9 @@ const Leaderboard = () => {
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Top 3 Podium */}
         <div className="grid md:grid-cols-3 gap-4 mb-8">
-          {leaderboard.slice(0, 3).map((entry, index) => (
+          {leaderboard.slice(0, 3).map((entry) => (
             <Card 
-              key={entry.rollNumber} 
+              key={entry.userId} 
               className={`${getRankCardClass(entry.rank)} ${isCurrentUser(entry) ? 'ring-2 ring-primary' : ''}`}
             >
               <CardHeader className="text-center pb-3">
@@ -206,65 +223,71 @@ const Leaderboard = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {leaderboard.map((entry) => (
-                <div
-                  key={entry.rollNumber}
-                  className={`flex items-center justify-between p-4 rounded-lg border transition-all hover:scale-[1.02] ${
-                    isCurrentUser(entry) 
-                      ? 'bg-primary/10 border-primary/30 ring-1 ring-primary/20' 
-                      : 'bg-background/50 border-border/50'
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center justify-center w-12">
-                      {getRankIcon(entry.rank)}
+            {isLoading ? (
+              <div className="text-sm text-muted-foreground">Loading leaderboard...</div>
+            ) : leaderboard.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No leaderboard data available yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {leaderboard.map((entry) => (
+                  <div
+                    key={entry.userId}
+                    className={`flex items-center justify-between p-4 rounded-lg border transition-all hover:scale-[1.02] ${
+                      isCurrentUser(entry) 
+                        ? 'bg-primary/10 border-primary/30 ring-1 ring-primary/20' 
+                        : 'bg-background/50 border-border/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center justify-center w-12">
+                        {getRankIcon(entry.rank)}
+                      </div>
+                      
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                          {entry.name.split(' ').map(n => n[0]).join('')}
+                        </AvatarFallback>
+                      </Avatar>
+                      
+                      <div>
+                        <div className="font-semibold flex items-center gap-2">
+                          {entry.name}
+                          {isCurrentUser(entry) && (
+                            <Badge variant="secondary" className="text-xs">You</Badge>
+                          )}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {entry.rollNumber}
+                        </div>
+                      </div>
                     </div>
                     
-                    <Avatar className="h-10 w-10">
-                      <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                        {entry.name.split(' ').map(n => n[0]).join('')}
-                      </AvatarFallback>
-                    </Avatar>
-                    
-                    <div>
-                      <div className="font-semibold flex items-center gap-2">
-                        {entry.name}
-                        {isCurrentUser(entry) && (
-                          <Badge variant="secondary" className="text-xs">You</Badge>
-                        )}
+                    <div className="flex items-center gap-6 text-sm">
+                      <div className="text-center">
+                        <div className="font-bold text-lg text-primary">{entry.score}%</div>
+                        <div className="text-xs text-muted-foreground">Score</div>
                       </div>
-                      <div className="text-sm text-muted-foreground">
-                        {entry.rollNumber}
+                      
+                      <div className="text-center">
+                        <div className="flex items-center gap-1 font-semibold">
+                          <Clock className="h-3 w-3 text-accent" />
+                          {entry.speed}%
+                        </div>
+                        <div className="text-xs text-muted-foreground">Speed</div>
+                      </div>
+                      
+                      <div className="text-center">
+                        <div className="flex items-center gap-1 font-semibold">
+                          <Target className="h-3 w-3 text-green-500" />
+                          {entry.efficiency}%
+                        </div>
+                        <div className="text-xs text-muted-foreground">Efficiency</div>
                       </div>
                     </div>
                   </div>
-                  
-                  <div className="flex items-center gap-6 text-sm">
-                    <div className="text-center">
-                      <div className="font-bold text-lg text-primary">{entry.score}%</div>
-                      <div className="text-xs text-muted-foreground">Score</div>
-                    </div>
-                    
-                    <div className="text-center">
-                      <div className="flex items-center gap-1 font-semibold">
-                        <Clock className="h-3 w-3 text-accent" />
-                        {entry.speed}%
-                      </div>
-                      <div className="text-xs text-muted-foreground">Speed</div>
-                    </div>
-                    
-                    <div className="text-center">
-                      <div className="flex items-center gap-1 font-semibold">
-                        <Target className="h-3 w-3 text-green-500" />
-                        {entry.efficiency}%
-                      </div>
-                      <div className="text-xs text-muted-foreground">Efficiency</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -282,7 +305,9 @@ const Leaderboard = () => {
           <Card className="glass-card">
             <CardContent className="py-6 text-center">
               <div className="text-2xl font-bold text-accent mb-2">
-                {Math.round(leaderboard.reduce((sum, entry) => sum + entry.score, 0) / leaderboard.length)}%
+                {leaderboard.length > 0
+                  ? `${Math.round(leaderboard.reduce((sum, entry) => sum + entry.score, 0) / leaderboard.length)}%`
+                  : '0%'}
               </div>
               <div className="text-sm text-muted-foreground">Average Score</div>
             </CardContent>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Send, Play, Brain, Terminal, Code, Lightbulb, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { requestAiAssistant } from '@/lib/aiClient';
+import { runCodeViaBackend } from '@/lib/codeRunnerClient';
+import { ROADMAP_DATA, PracticeProblem as RoadmapPracticeProblem, RoadmapNode } from '@/data/roadmapData';
+import {
+  ProblemExecutionConfig,
+  ProblemExecutionMode,
+  buildExecutionInstructions,
+  detectExecutionMode,
+  inferFunctionName,
+  normalizeExecutionOutput,
+} from '@/lib/problemExecution';
 
 interface StudentData {
   name: string;
@@ -17,53 +28,278 @@ interface StudentData {
   achievements: string[];
 }
 
+interface Problem {
+  id?: string;
+  title: string;
+  difficulty: string;
+  description: string;
+  example: string;
+  expectedOutput: string;
+  hints: string[];
+  starterCode?: string;
+  executionMode?: ProblemExecutionMode;
+  functionName?: string;
+  testCases: Array<{
+    input: string;
+    expected: string;
+  }>;
+  referenceSolution?: string;
+}
+
+function buildProblemContext(problem: Problem | null) {
+  if (!problem) return undefined;
+
+  return [
+    `Title: ${problem.title}`,
+    `Difficulty: ${problem.difficulty}`,
+    `Description: ${problem.description}`,
+    `Example: ${problem.example}`,
+    `Expected Output: ${problem.expectedOutput}`,
+    `Test Cases: ${problem.testCases.map((testCase, index) => `#${index + 1} input=${JSON.stringify(testCase.input)} expected=${JSON.stringify(testCase.expected)}`).join(' | ')}`,
+    `Available Hints: ${problem.hints.join(' | ')}`,
+  ].join('\n');
+}
+
+interface TestResult {
+  input: string;
+  expected: string;
+  actual: string;
+  status: 'Passed' | 'Failed';
+  error?: string;
+}
+
+interface ValidationSummary {
+  title: string;
+  passed: number;
+  total: number;
+}
+
+const normalize = (str = '') => str.replace(/\s/g, '');
+
+function flattenRoadmapNodes(nodes: RoadmapNode[]): RoadmapNode[] {
+  return nodes.flatMap((node) => [node, ...(node.children ? flattenRoadmapNodes(node.children) : [])]);
+}
+
+function buildRoadmapProblem(node: RoadmapNode, roadmapProblem: RoadmapPracticeProblem): Problem {
+  const functionName = roadmapProblem.functionName || inferFunctionName(roadmapProblem.starterCode, 'python');
+  const executionMode = roadmapProblem.executionMode || 'function';
+  const firstTestCase = roadmapProblem.testCases[0];
+
+  return {
+    id: node.id,
+    title: roadmapProblem.title,
+    difficulty: roadmapProblem.difficulty,
+    description: roadmapProblem.description,
+    example: firstTestCase
+      ? `Input: ${firstTestCase.input}\nOutput: ${firstTestCase.expected}`
+      : 'No example available.',
+    expectedOutput: normalizeExpectedValue(firstTestCase?.expected || ''),
+    hints: [
+      executionMode === 'function'
+        ? `Write only the function ${functionName}(...) and return the result.`
+        : 'Read from input and print the final answer.',
+      'Use Run Code to try a custom input.',
+      'Use Run Test Cases to validate against all predefined tests.',
+    ],
+    starterCode: roadmapProblem.starterCode,
+    executionMode,
+    functionName,
+    testCases: roadmapProblem.testCases.map((testCase) => ({
+      input: testCase.input.trim(),
+      expected: normalizeExpectedValue(testCase.expected),
+    })),
+  };
+}
+
+function normalizeExpectedValue(value: string) {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\s*,\s*/g, ',')
+    .replace(/\[\s*/g, '[')
+    .replace(/\s*\]/g, ']')
+    .trim();
+}
+
+function fixTestCaseInput(problemTitle: string, input: string) {
+  const trimmedInput = input.trim();
+
+  if (problemTitle === 'Two Sum' && trimmedInput && !trimmedInput.includes('\n')) {
+    const parts = trimmedInput.split(/\s+/);
+
+    if (parts.length >= 2) {
+      return `${parts.slice(0, -1).join(' ')}\n${parts[parts.length - 1]}`;
+    }
+  }
+
+  return trimmedInput;
+}
+
+const rawPracticeProblems: Problem[] = [
+  {
+    title: 'Two Sum',
+    difficulty: 'Easy',
+    description: 'Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.',
+    example: 'Input: nums = [2,7,11,15], target = 9\nOutput: [0,1]\nExplanation: Because nums[0] + nums[1] == 9, we return [0, 1].',
+    expectedOutput: '[0, 1]',
+    hints: ['Use a hash map to store the values and their indices', 'For each element, check if target - element exists in the map'],
+    testCases: [
+      { input: '2 7 11 15\n9', expected: '[0,1]' },
+      { input: '3 2 4\n6', expected: '[1,2]' },
+      { input: '3 3\n6', expected: '[0,1]' },
+    ],
+    referenceSolution: `nums = list(map(int, input().split()))
+target = int(input().strip())
+seen = {}
+
+for index, value in enumerate(nums):
+    needed = target - value
+    if needed in seen:
+        print(f"[{seen[needed]},{index}]")
+        break
+    seen[value] = index`,
+  },
+  {
+    title: 'Palindrome Check',
+    difficulty: 'Easy',
+    description: 'Write a function to check if a given string is a palindrome (reads the same forwards and backwards).',
+    example: "Input: 'racecar'\nOutput: True\nInput: 'hello'\nOutput: False",
+    expectedOutput: 'True',
+    hints: ['Compare characters from start and end', 'Use two pointers approach', 'Consider case sensitivity'],
+    testCases: [
+      { input: 'racecar', expected: 'True' },
+      { input: 'hello', expected: 'False' },
+      { input: 'madam', expected: 'True' },
+    ],
+    referenceSolution: `text = input().strip()
+print(str(text == text[::-1]))`,
+  },
+  {
+    title: 'Fibonacci Sequence',
+    difficulty: 'Medium',
+    description: 'Write a function to generate the nth Fibonacci number. The sequence starts with 0, 1.',
+    example: 'Input: n = 5\nOutput: 5\nSequence: 0, 1, 1, 2, 3, 5',
+    expectedOutput: '5',
+    hints: ['Use dynamic programming for efficiency', 'Consider recursive approach with memoization', 'Base cases are F(0) = 0, F(1) = 1'],
+    testCases: [
+      { input: '0', expected: '0' },
+      { input: '5', expected: '5' },
+      { input: '8', expected: '21' },
+    ],
+    referenceSolution: `n = int(input().strip())
+if n == 0:
+    print(0)
+elif n == 1:
+    print(1)
+else:
+    a, b = 0, 1
+    for _ in range(2, n + 1):
+        a, b = b, a + b
+    print(b)`,
+  },
+];
+
+const practiceProblems: Problem[] = rawPracticeProblems.map((problem) => ({
+  ...problem,
+  expectedOutput: normalizeExpectedValue(problem.expectedOutput),
+  testCases: problem.testCases.map((testCase) => ({
+    input: fixTestCaseInput(problem.title, testCase.input),
+    expected: normalizeExpectedValue(testCase.expected),
+  })),
+}));
+
 export default function PracticePage() {
   const [student, setStudent] = useState<StudentData | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState('python');
   const [code, setCode] = useState('');
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
+  const [executionError, setExecutionError] = useState('');
+  const [executionStatus, setExecutionStatus] = useState('Idle');
   const [isRunning, setIsRunning] = useState(false);
+  const [isRunningTests, setIsRunningTests] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   const [chatHistory, setChatHistory] = useState<Array<{type: 'user' | 'ai', message: string}>>([]);
   const [isLoadingResponse, setIsLoadingResponse] = useState(false);
-  const [currentProblem, setCurrentProblem] = useState<any>(null);
+  const [currentProblem, setCurrentProblem] = useState<Problem | null>(null);
   const [isGeneratingProblem, setIsGeneratingProblem] = useState(false);
+  const [testResults, setTestResults] = useState<TestResult[]>([]);
+  const [validationSummary, setValidationSummary] = useState<ValidationSummary[]>([]);
+  const [isValidatingProblems, setIsValidatingProblems] = useState(false);
+  const location = useLocation();
   const navigate = useNavigate();
+  const problemContext = buildProblemContext(currentProblem);
+  const canUseAssistant = Boolean(problemContext?.trim()) && !isGeneratingProblem;
+  const testCases = currentProblem?.testCases || [];
+  const passedTests = testResults.filter((result) => result.status === 'Passed').length;
+  const executionConfig: ProblemExecutionConfig = currentProblem
+    ? {
+        mode: currentProblem.executionMode || detectExecutionMode(code, currentProblem.starterCode),
+        functionName:
+          currentProblem.functionName || inferFunctionName(code || currentProblem.starterCode || "", selectedLanguage),
+      }
+    : { mode: 'stdin' };
+  const executionInstructions = buildExecutionInstructions(executionConfig);
 
   useEffect(() => {
-    const studentData = localStorage.getItem('currentStudent');
-    if (!studentData) {
-      // Create mock student data if none exists
-      const mockStudent = {
+    try {
+      const studentData = localStorage.getItem('currentStudent');
+      if (!studentData) {
+        const mockStudent = {
+          name: 'Demo Student',
+          rollNumber: 'DEMO001',
+          totalProblems: 0,
+          streakCount: 0,
+          achievements: []
+        };
+        setStudent(mockStudent);
+        localStorage.setItem('currentStudent', JSON.stringify(mockStudent));
+      } else {
+        setStudent(JSON.parse(studentData));
+      }
+    } catch (error) {
+      console.error('Failed to parse currentStudent from localStorage:', error);
+      const fallbackStudent = {
         name: 'Demo Student',
         rollNumber: 'DEMO001',
         totalProblems: 0,
         streakCount: 0,
         achievements: []
       };
-      setStudent(mockStudent);
-      localStorage.setItem('currentStudent', JSON.stringify(mockStudent));
-    } else {
-      setStudent(JSON.parse(studentData));
+      setStudent(fallbackStudent);
+      localStorage.setItem('currentStudent', JSON.stringify(fallbackStudent));
     }
-    
-    // Initialize with a welcome message
+
     setChatHistory([
-      { type: 'ai', message: "Hello! I'm your AI coding assistant. I can help you with:\n• Explaining coding concepts\n• Debugging your code\n• Generating practice problems\n• Code optimization tips\n\nWhat would you like to work on today?" }
+      { type: 'ai', message: "Hello! I'm your AI coding assistant. I can help you with:\n- Explaining coding concepts\n- Debugging your code\n- Generating practice problems\n- Code optimization tips\n\nWhat would you like to work on today?" }
     ]);
 
-    // Generate initial problem
-    generateProblem();
-  }, [navigate]);
+    const topicId = new URLSearchParams(location.search).get('topicId');
+    if (!topicId) {
+      void generateProblem();
+    }
+  }, [location.search, navigate]);
 
   const languages = [
     { value: 'python', label: 'Python', starter: '# Write your Python code here\nprint("Hello, CodeLab!")' },
     { value: 'javascript', label: 'JavaScript', starter: '// Write your JavaScript code here\nconsole.log("Hello, CodeLab!");' },
-    { value: 'java', label: 'Java', starter: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, CodeLab!");\n    }\n}' },
     { value: 'cpp', label: 'C++', starter: '#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello, CodeLab!" << endl;\n    return 0;\n}' },
-    { value: 'c', label: 'C', starter: '#include <stdio.h>\n\nint main() {\n    printf("Hello, CodeLab!\\n");\n    return 0;\n}' }
   ];
+
+  const loadProblem = (problem: Problem) => {
+    setCurrentProblem(problem);
+    setTestResults([]);
+    setOutput('');
+    setExecutionError('');
+    setExecutionStatus('Idle');
+    setInput(problem.testCases[0]?.input || '');
+
+    if (problem.starterCode) {
+      setCode(problem.starterCode);
+    } else {
+      const selectedLang = languages.find((lang) => lang.value === selectedLanguage);
+      setCode(selectedLang?.starter || '');
+    }
+  };
 
   useEffect(() => {
     const selectedLang = languages.find(lang => lang.value === selectedLanguage);
@@ -72,40 +308,39 @@ export default function PracticePage() {
     }
   }, [selectedLanguage]);
 
+  useEffect(() => {
+    console.log('[Practice] currentProblem updated:', currentProblem);
+  }, [currentProblem]);
+
   const generateProblem = async () => {
     setIsGeneratingProblem(true);
-    
-    // Simulate AI problem generation (replace with actual Gemini API call)
+
     setTimeout(() => {
-      const problems = [
-        {
-          title: "Two Sum",
-          difficulty: "Easy",
-          description: "Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.",
-          example: "Input: nums = [2,7,11,15], target = 9\nOutput: [0,1]\nExplanation: Because nums[0] + nums[1] == 9, we return [0, 1].",
-          hints: ["Use a hash map to store the values and their indices", "For each element, check if target - element exists in the map"]
-        },
-        {
-          title: "Palindrome Check",
-          difficulty: "Easy",
-          description: "Write a function to check if a given string is a palindrome (reads the same forwards and backwards).",
-          example: "Input: 'racecar'\nOutput: True\nInput: 'hello'\nOutput: False",
-          hints: ["Compare characters from start and end", "Use two pointers approach", "Consider case sensitivity"]
-        },
-        {
-          title: "Fibonacci Sequence",
-          difficulty: "Medium",
-          description: "Write a function to generate the nth Fibonacci number. The sequence starts with 0, 1.",
-          example: "Input: n = 5\nOutput: 5\nSequence: 0, 1, 1, 2, 3, 5",
-          hints: ["Use dynamic programming for efficiency", "Consider recursive approach with memoization", "Base cases are F(0) = 0, F(1) = 1"]
-        }
-      ];
-      
-      const randomProblem = problems[Math.floor(Math.random() * problems.length)];
-      setCurrentProblem(randomProblem);
+      const randomProblem = practiceProblems[Math.floor(Math.random() * practiceProblems.length)];
+      loadProblem(randomProblem);
       setIsGeneratingProblem(false);
     }, 2000);
   };
+
+  useEffect(() => {
+    const topicId = new URLSearchParams(location.search).get('topicId');
+    if (!topicId) {
+      return;
+    }
+
+    const roadmapNode = Object.values(ROADMAP_DATA)
+      .flatMap((nodes) => flattenRoadmapNodes(nodes))
+      .find((node) => node.id === topicId && node.problem);
+
+    if (!roadmapNode?.problem) {
+      toast.error('Roadmap problem not found');
+      void generateProblem();
+      return;
+    }
+
+    setSelectedLanguage('python');
+    loadProblem(buildRoadmapProblem(roadmapNode, roadmapNode.problem));
+  }, [location.search]);
 
   const runCode = async () => {
     if (!code.trim()) {
@@ -113,96 +348,265 @@ export default function PracticePage() {
       return;
     }
 
+    const effectiveInput =
+      executionConfig.mode === 'function'
+        ? (input.trim() || currentProblem?.testCases[0]?.input || '')
+        : input;
+
     setIsRunning(true);
-    setOutput('Running your code...\n');
+    setOutput('');
+    setExecutionError('');
+    setExecutionStatus('Running...');
 
     try {
-      // Simulate API call to OneCompiler
-      const response = await fetch('https://onecompiler-apis.p.rapidapi.com/api/v1/run', {
-        method: 'POST',
-        headers: {
-          'x-rapidapi-key': 'ead58a2ba3msh92dcc5cbcbf559ap11fc2fjsn5288ed507ac5',
-          'x-rapidapi-host': 'onecompiler-apis.p.rapidapi.com',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          language: selectedLanguage,
-          stdin: input,
-          files: [{
-            name: selectedLanguage === 'python' ? 'main.py' : selectedLanguage === 'javascript' ? 'main.js' : selectedLanguage === 'java' ? 'Main.java' : 'main.cpp',
-            content: code
-          }]
-        })
+      const result = await runCodeViaBackend({
+        code,
+        language: selectedLanguage,
+        input: effectiveInput,
+        execution:
+          executionConfig.mode === 'function'
+            ? {
+                mode: 'function',
+                functionName: executionConfig.functionName,
+                argumentExpression: effectiveInput,
+              }
+            : undefined,
       });
 
-      const result = await response.json();
-      
-      if (result.stdout) {
-        setOutput(result.stdout);
-        
-        // Update student progress
-        if (student) {
-          const updatedStudent = {
-            ...student,
-            totalProblems: student.totalProblems + 1
-          };
-          setStudent(updatedStudent);
-          localStorage.setItem('currentStudent', JSON.stringify(updatedStudent));
-          toast.success('Code executed successfully!');
-        }
-      } else if (result.stderr) {
-        setOutput(`Error:\n${result.stderr}`);
+      setExecutionStatus(result.status);
+
+      if (result.error) {
+        setExecutionError(result.error);
+        setOutput('');
+      } else if (result.output) {
+        setOutput(result.output);
+        setExecutionError('');
       } else {
-        setOutput('Code executed successfully! (No output)');
+        setOutput('');
+        setExecutionError('Program executed successfully, but no output was printed.');
       }
     } catch (error) {
-      // Fallback for demo purposes
-      setTimeout(() => {
-        if (selectedLanguage === 'python' && code.includes('print')) {
-          setOutput('Hello, CodeLab!\nCode executed successfully!');
-          if (student) {
-            const updatedStudent = {
-              ...student,
-              totalProblems: student.totalProblems + 1
-            };
-            setStudent(updatedStudent);
-            localStorage.setItem('currentStudent', JSON.stringify(updatedStudent));
-          }
-          toast.success('Code executed successfully!');
-        } else {
-          setOutput('Hello, CodeLab!\nCode executed successfully!\n\nNote: This is a demo output. In production, your code would be executed on our servers.');
-        }
-      }, 1000);
+      const message = error instanceof Error ? error.message : 'Failed to run code.';
+      setExecutionStatus('Execution failed');
+      setOutput('');
+      setExecutionError(message);
+      toast.error('Code execution failed', {
+        description: message,
+      });
     }
 
     setIsRunning(false);
   };
 
-  const sendChatMessage = async () => {
-    if (!chatMessage.trim()) return;
+  const runTestCases = async () => {
+    if (!code.trim()) {
+      toast.error('Please write some code first');
+      return;
+    }
 
-    const userMessage = chatMessage.trim();
+    if (!testCases.length) {
+      toast.error('No test cases available for this problem');
+      return;
+    }
+
+    setIsRunningTests(true);
+    setTestResults([]);
+
+    try {
+      const results: TestResult[] = [];
+
+      for (const [index, testCase] of testCases.entries()) {
+        const result = await runCodeViaBackend({
+          code,
+          language: selectedLanguage,
+          input: testCase.input,
+          execution:
+            executionConfig.mode === 'function'
+              ? {
+                  mode: 'function',
+                  functionName: executionConfig.functionName,
+                  argumentExpression: testCase.input,
+                }
+              : undefined,
+        });
+
+        const actual = (result.output || '').trim();
+        const expected = testCase.expected.trim();
+        const hasError = Boolean(result.error);
+        const didPass = !hasError && normalizeExecutionOutput(actual) === normalizeExecutionOutput(expected);
+
+        console.log('[Practice] Test case result:', {
+          problem: currentProblem?.title,
+          testCase: index + 1,
+          input: testCase.input,
+          expected,
+          actual,
+          error: result.error || '',
+          status: didPass ? 'Passed' : 'Failed',
+        });
+
+        results.push({
+          input: testCase.input,
+          expected: testCase.expected,
+          actual,
+          status: didPass ? 'Passed' : 'Failed',
+          error: hasError ? result.error : undefined,
+        });
+      }
+
+      setTestResults(results);
+      setOutput('');
+      setExecutionError('');
+      setExecutionStatus(`Passed ${results.filter((result) => result.status === 'Passed').length}/${results.length} tests`);
+
+      if (results.every((result) => result.status === 'Passed')) {
+        toast.success('All test cases passed');
+      } else {
+        toast.error('Some test cases failed', {
+          description: `Passed ${results.filter((result) => result.status === 'Passed').length} of ${results.length}`,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to run test cases.';
+      setExecutionStatus('Test execution failed');
+      setTestResults([]);
+      toast.error('Test case execution failed', {
+        description: message,
+      });
+    } finally {
+      setIsRunningTests(false);
+    }
+  };
+
+  const validateAllProblems = async () => {
+    setIsValidatingProblems(true);
+    setValidationSummary([]);
+
+    try {
+      const summary: ValidationSummary[] = [];
+
+      for (const problem of practiceProblems) {
+        let passed = 0;
+        const validationExecutionConfig: ProblemExecutionConfig = {
+          mode: problem.executionMode || detectExecutionMode(problem.referenceSolution || '', problem.starterCode),
+          functionName: problem.functionName || inferFunctionName(problem.referenceSolution || problem.starterCode || '', 'python'),
+        };
+
+        for (const [index, testCase] of problem.testCases.entries()) {
+          const result = await runCodeViaBackend({
+            code: problem.referenceSolution || '',
+            language: 'python',
+            input: testCase.input,
+            execution:
+              validationExecutionConfig.mode === 'function'
+                ? {
+                    mode: 'function',
+                    functionName: validationExecutionConfig.functionName,
+                    argumentExpression: testCase.input,
+                  }
+                : undefined,
+          });
+
+          const actual = (result.output || '').trim();
+          const expected = testCase.expected.trim();
+          const didPass = !result.error && normalizeExecutionOutput(actual) === normalizeExecutionOutput(expected);
+
+          console.log('[Practice] Validation result:', {
+            problem: problem.title,
+            testCase: index + 1,
+            input: testCase.input,
+            expected,
+            actual,
+            error: result.error || '',
+            status: didPass ? 'Passed' : 'Failed',
+          });
+
+          if (didPass) {
+            passed += 1;
+          }
+        }
+
+        summary.push({
+          title: problem.title,
+          passed,
+          total: problem.testCases.length,
+        });
+      }
+
+      setValidationSummary(summary);
+      console.log(
+        '[Practice] Validation summary:\n' +
+          summary.map((item) => `Problem: ${item.title} - ${item.passed}/${item.total} Passed`).join('\n')
+      );
+
+      if (summary.every((item) => item.passed === item.total)) {
+        toast.success('All problems validated successfully');
+      } else {
+        toast.error('Some practice problems still have failing test cases');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to validate problems.';
+      toast.error('Problem validation failed', {
+        description: message,
+      });
+    } finally {
+      setIsValidatingProblems(false);
+    }
+  };
+
+  const submitChatPrompt = async (rawMessage: string) => {
+    const userMessage = rawMessage.trim();
+    if (!userMessage) return;
+    if (!problemContext || problemContext.trim() === '') {
+      toast.error('Problem not ready', {
+        description: 'Wait for the current problem to load before asking the assistant.',
+      });
+      return;
+    }
+
     setChatMessage('');
     setChatHistory(prev => [...prev, { type: 'user', message: userMessage }]);
     setIsLoadingResponse(true);
 
-    // Simulate AI response (replace with actual Gemini API call)
-    setTimeout(() => {
-      let aiResponse = '';
-      
-      if (userMessage.toLowerCase().includes('problem') || userMessage.toLowerCase().includes('challenge')) {
-        aiResponse = "I'd be happy to help you with a coding problem! Here are some suggestions based on your current skill level:\n\n1. **Array Problems**: Try working with two pointers or sliding window techniques\n2. **String Manipulation**: Practice palindromes, anagrams, and pattern matching\n3. **Basic Algorithms**: Implement sorting algorithms or search algorithms\n\nWould you like me to generate a specific problem for you to solve?";
-      } else if (userMessage.toLowerCase().includes('debug') || userMessage.toLowerCase().includes('error')) {
-        aiResponse = "I can help you debug your code! Here are some common debugging strategies:\n\n1. **Check your syntax** - Make sure all brackets, quotes, and semicolons are properly placed\n2. **Use print statements** - Add debug prints to see what values your variables have\n3. **Check variable types** - Ensure you're using the right data types\n4. **Review logic flow** - Walk through your code step by step\n\nFeel free to share your code and I'll help you identify any issues!";
-      } else if (userMessage.toLowerCase().includes('hint') && currentProblem) {
-        aiResponse = `Here are some hints for "${currentProblem.title}":\n\n${currentProblem.hints.map((hint: string, i: number) => `${i + 1}. ${hint}`).join('\n')}\n\nTry implementing these approaches and let me know if you need more specific guidance!`;
-      } else {
-        aiResponse = `Great question! I understand you're asking about: "${userMessage}"\n\nHere's my advice: Start by breaking down the problem into smaller parts. Write pseudocode first, then implement each part step by step. Don't forget to test your code with different inputs!\n\nWould you like me to elaborate on any specific aspect or provide a coding example?`;
-      }
+    try {
+      const prompt =
+        userMessage.toLowerCase().includes('hint') && currentProblem
+          ? `Give me developer-focused hints for this problem: ${currentProblem.title}\n\nProblem description:\n${currentProblem.description}\n\nExample:\n${currentProblem.example}`
+          : userMessage;
+
+      const requestPayload = {
+        prompt,
+        code,
+        output: [executionStatus ? `Status: ${executionStatus}` : '', output, executionError].filter(Boolean).join('\n\n'),
+        problem: problemContext,
+      };
+
+      console.log('[Practice] Sending /api/ai payload:', requestPayload);
+
+      const aiResponse = await requestAiAssistant(requestPayload);
 
       setChatHistory(prev => [...prev, { type: 'ai', message: aiResponse }]);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to get AI response.';
+
+      setChatHistory(prev => [
+        ...prev,
+        {
+          type: 'ai',
+          message: `I couldn't process that request right now.\n\n${message}`,
+        },
+      ]);
+      toast.error('AI assistant request failed', {
+        description: message,
+      });
+    } finally {
       setIsLoadingResponse(false);
-    }, 1500);
+    }
+  };
+
+  const sendChatMessage = async () => {
+    await submitChatPrompt(chatMessage);
   };
 
   if (!student) {
@@ -215,12 +619,10 @@ export default function PracticePage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 relative overflow-hidden">
-      {/* Animated background particles */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(0,255,204,0.15)_1px,transparent_0)] bg-[length:20px_20px] animate-pulse"></div>
       </div>
-      
-      {/* Header */}
+
       <header className="relative z-10 border-b border-cyan-500/20 bg-slate-900/30 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
@@ -228,7 +630,7 @@ export default function PracticePage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate('/profile')}
                 className="border-cyan-500/30 text-cyan-300 hover:text-white hover:border-cyan-400 hover:bg-cyan-500/10"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
@@ -250,7 +652,6 @@ export default function PracticePage() {
       </header>
 
       <div className="relative z-10 max-w-7xl mx-auto px-6 py-6">
-        {/* Current Problem - move to top */}
         {currentProblem && (
           <Card className="mb-6 bg-slate-900/40 backdrop-blur-lg border-cyan-500/20">
             <CardHeader>
@@ -261,8 +662,8 @@ export default function PracticePage() {
                 </CardTitle>
                 <div className="flex items-center space-x-2">
                   <Badge className={
-                    currentProblem.difficulty === 'Easy' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 
-                    currentProblem.difficulty === 'Medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' : 
+                    currentProblem.difficulty === 'Easy' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                    currentProblem.difficulty === 'Medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
                     'bg-red-500/20 text-red-400 border-red-500/30'
                   }>
                     {currentProblem.difficulty}
@@ -270,7 +671,7 @@ export default function PracticePage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={generateProblem}
+                    onClick={() => void generateProblem()}
                     disabled={isGeneratingProblem}
                     className="border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10"
                   >
@@ -281,6 +682,20 @@ export default function PracticePage() {
                     )}
                     New Problem
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void validateAllProblems()}
+                    disabled={isValidatingProblems}
+                    className="border-green-500/30 text-green-300 hover:bg-green-500/10"
+                  >
+                    {isValidatingProblems ? (
+                      <div className="w-4 h-4 border-2 border-green-400 border-t-transparent rounded-full animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    Validate All Problems
+                  </Button>
                 </div>
               </div>
             </CardHeader>
@@ -288,18 +703,55 @@ export default function PracticePage() {
               <div>
                 <h4 className="font-semibold mb-2 text-white">Description</h4>
                 <p className="text-gray-300">{currentProblem.description}</p>
+                <p className="text-xs text-cyan-300 mt-2">{executionInstructions}</p>
               </div>
-              
+
               <div>
                 <h4 className="font-semibold mb-2 text-white">Example</h4>
                 <pre className="bg-slate-950 p-3 rounded text-sm text-green-400 font-mono border border-cyan-500/30">{currentProblem.example}</pre>
               </div>
+
+              <div>
+                <h4 className="font-semibold mb-2 text-white">Test Cases</h4>
+                <div className="space-y-2">
+                  {testCases.map((testCase, index) => (
+                    <div key={`${currentProblem.title}-test-${index}`} className="bg-slate-950 p-3 rounded border border-cyan-500/20 text-sm">
+                      <div className="text-cyan-300 font-medium mb-1">Test Case {index + 1}</div>
+                      <div className="text-gray-300 whitespace-pre-wrap">
+                        <span className="text-white">Input:</span> {testCase.input || '(empty)'}
+                      </div>
+                      <div className="text-gray-300 whitespace-pre-wrap">
+                        <span className="text-white">Expected:</span> {testCase.expected}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {validationSummary.length > 0 && (
+                <div>
+                  <h4 className="font-semibold mb-2 text-white">Validation Summary</h4>
+                  <div className="space-y-2">
+                    {validationSummary.map((item) => (
+                      <div
+                        key={item.title}
+                        className={`rounded border p-3 text-sm ${
+                          item.passed === item.total
+                            ? 'border-green-500/30 bg-green-500/10 text-green-300'
+                            : 'border-red-500/30 bg-red-500/10 text-red-300'
+                        }`}
+                      >
+                        Problem: {item.title} - {item.passed}/{item.total} Passed
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
 
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* AI Chat Assistant */}
           <Card className="lg:col-span-1 bg-slate-900/40 backdrop-blur-lg border-cyan-500/20">
             <CardHeader>
               <CardTitle className="flex items-center text-white">
@@ -328,28 +780,34 @@ export default function PracticePage() {
                   </div>
                 )}
               </div>
-              
+
               <div className="flex space-x-2">
                 <Input
                   placeholder="Ask for help, hints, or explanations..."
                   value={chatMessage}
                   onChange={(e) => setChatMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void sendChatMessage();
+                    }
+                  }}
                   className="flex-1 bg-slate-800/50 border-cyan-500/30 text-white placeholder-gray-400 focus:border-cyan-400"
+                  disabled={!canUseAssistant || isLoadingResponse}
                 />
-                <Button onClick={sendChatMessage} disabled={isLoadingResponse} className="bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600">
+                <Button onClick={() => void sendChatMessage()} disabled={!canUseAssistant || isLoadingResponse} className="bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600">
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
 
               {currentProblem && (
                 <div className="mt-4 p-3 bg-gradient-to-r from-cyan-500/10 to-green-500/10 rounded-lg border border-cyan-500/20">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => sendChatMessage()}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void submitChatPrompt(`Give me hints for ${currentProblem.title}`)}
                     className="w-full border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10"
-                    disabled={isLoadingResponse}
+                    disabled={!canUseAssistant || isLoadingResponse}
                   >
                     <Lightbulb className="w-4 h-4 mr-2" />
                     Get Hints for Current Problem
@@ -359,7 +817,6 @@ export default function PracticePage() {
             </CardContent>
           </Card>
 
-          {/* Main Coding Area */}
           <Card className="lg:col-span-2 bg-slate-900/40 backdrop-blur-lg border-cyan-500/20">
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -368,7 +825,18 @@ export default function PracticePage() {
                   Code Editor
                 </CardTitle>
                 <div className="flex items-center space-x-2">
-                  <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+                  <Select
+                    value={selectedLanguage}
+                    onValueChange={(value) => {
+                      if (currentProblem?.id && executionConfig.mode === 'function' && value !== 'python') {
+                        toast.info('Roadmap challenges are standardized for Python function execution.');
+                        setSelectedLanguage('python');
+                        return;
+                      }
+
+                      setSelectedLanguage(value);
+                    }}
+                  >
                     <SelectTrigger className="w-40 bg-slate-800/50 border-cyan-500/30 text-white">
                       <SelectValue />
                     </SelectTrigger>
@@ -396,12 +864,22 @@ export default function PracticePage() {
                   'bg-slate-950 text-white border-cyan-500/30'
                 }`}
               />
-              
+
+              <p className="text-xs text-cyan-300">
+                {executionConfig.mode === 'function'
+                  ? `Write only ${executionConfig.functionName || 'solution'}(...). Use the Input box for function arguments like the test cases.`
+                  : 'Use input/print style code. The Input box is passed to your program as stdin.'}
+              </p>
+
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-2 block text-white">Input (stdin)</label>
                   <Textarea
-                    placeholder="Enter input for your program..."
+                    placeholder={
+                      executionConfig.mode === 'function'
+                        ? 'Enter function arguments exactly like a test case, e.g. [1,2,3], 4'
+                        : 'Enter input for your program...'
+                    }
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     className="h-24 text-sm bg-slate-800/50 border-cyan-500/30 text-white placeholder-gray-400 focus:border-cyan-400"
@@ -409,14 +887,26 @@ export default function PracticePage() {
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-2 block text-white">Output</label>
-                  <div className="terminal h-24 bg-slate-950 border border-cyan-500/30 rounded-md p-3 overflow-auto">
-                    <pre className="text-sm text-green-400 font-mono">{output}</pre>
+                  <div className="terminal min-h-24 bg-slate-950 border border-cyan-500/30 rounded-md p-3 overflow-auto">
+                    <div className="text-xs text-cyan-300 mb-2">Status: {executionStatus}</div>
+                    <div className="text-sm text-green-400 font-mono whitespace-pre-wrap">
+                      <span className="text-white">Output:</span>
+                      {'\n'}
+                      {output || 'No output'}
+                    </div>
+                    {executionError && (
+                      <div className="text-sm text-red-400 font-mono whitespace-pre-wrap mt-3">
+                        <span className="text-red-300">Error:</span>
+                        {'\n'}
+                        {executionError}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="flex space-x-2">
-                <Button onClick={runCode} disabled={isRunning} className="flex-1 bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600">
+                <Button onClick={runCode} disabled={isRunning || isRunningTests} className="flex-1 bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600">
                   {isRunning ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
@@ -429,13 +919,76 @@ export default function PracticePage() {
                     </>
                   )}
                 </Button>
+                <Button
+                  onClick={() => void runTestCases()}
+                  disabled={isRunning || isRunningTests || !testCases.length}
+                  variant="outline"
+                  className="flex-1 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10"
+                >
+                  {isRunningTests ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-cyan-300 border-t-transparent rounded-full animate-spin mr-2" />
+                      Running Tests...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Run Test Cases
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="rounded-lg border border-cyan-500/20 bg-slate-900/30 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-semibold text-white">Test Results</h4>
+                  <Badge className="bg-slate-800 text-cyan-300 border-cyan-500/30">
+                    Passed: {passedTests} / {testResults.length || testCases.length}
+                  </Badge>
+                </div>
+
+                {testResults.length === 0 ? (
+                  <p className="text-sm text-gray-400">Run test cases to see pass/fail results for this problem.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {testResults.map((result, index) => (
+                      <div
+                        key={`result-${index}`}
+                        className={`rounded-md border p-3 text-sm ${
+                          result.status === 'Passed'
+                            ? 'border-green-500/30 bg-green-500/10'
+                            : 'border-red-500/30 bg-red-500/10'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium text-white">Test Case {index + 1}</span>
+                          <span className={result.status === 'Passed' ? 'text-green-400' : 'text-red-400'}>
+                            {result.status}
+                          </span>
+                        </div>
+                        <div className="text-gray-300 whitespace-pre-wrap">
+                          <span className="text-white">Input:</span> {result.input || '(empty)'}
+                        </div>
+                        <div className="text-gray-300 whitespace-pre-wrap">
+                          <span className="text-white">Expected:</span> {result.expected}
+                        </div>
+                        <div className="text-gray-300 whitespace-pre-wrap">
+                          <span className="text-white">Actual:</span> {result.actual || '(no output)'}
+                        </div>
+                        {result.error && (
+                          <div className="text-red-300 whitespace-pre-wrap mt-2">
+                            <span className="text-red-200">Error:</span> {result.error}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Current Problem moved above */}
-        {/* Footer - Back to Home */}
         <div className="mt-8 flex justify-center">
           <Button
             variant="outline"

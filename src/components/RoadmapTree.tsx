@@ -66,6 +66,15 @@ const TreeNode = ({
                 {node.title}
               </h3>
               <p className="text-sm text-gray-400 mb-3">{node.description}</p>
+              {/* Difficulty Badge */}
+{node.problem && (
+  <span className={`text-xs px-2 py-1 rounded-full mb-2 inline-block
+    ${node.problem.difficulty === "Easy" ? "bg-green-500/20 text-green-400" :
+      node.problem.difficulty === "Medium" ? "bg-yellow-500/20 text-yellow-400" :
+      "bg-red-500/20 text-red-400"}`}>
+    Difficulty: {node.problem.difficulty}
+  </span>
+)}
               
               {/* Show topics as pills */}
               {node.topics && (

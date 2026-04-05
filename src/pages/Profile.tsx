@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { User, Flame, CheckCircle2, Code2, BookOpenCheck, Trophy, BarChart3, MessagesSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth'; // --- IMPORT AUTH HOOK ---
+import { loadExamResults } from '@/lib/examResults';
 
 interface StudentData {
   name: string;
@@ -17,27 +18,32 @@ export default function Profile() {
   const navigate = useNavigate();
   // --- GET PROFILE FROM AUTH HOOK ---
   const { profile } = useAuth();
+  const examResults = loadExamResults();
 
   useEffect(() => {
     // --- USE PROFILE USERNAME, FALLBACK TO 'User' ---
     const userName = profile?.username || 'User'; 
-    const stored = localStorage.getItem('currentStudent');
-    
-    if (stored) {
-      const parsedData = JSON.parse(stored);
-      parsedData.name = userName; // Update with the correct username
-      setStudent(parsedData);
-    } else {
-      const fresh: StudentData = {
-        name: userName, // Set the correct username
-        totalProblems: 0,
-        streakCount: 0,
-        achievements: []
-      };
-      setStudent(fresh);
-      localStorage.setItem('currentStudent', JSON.stringify(fresh));
+    try {
+      const stored = localStorage.getItem('currentStudent');
+
+      if (stored) {
+        const parsedData = JSON.parse(stored);
+        parsedData.name = userName;
+        setStudent(parsedData);
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to parse currentStudent from localStorage:', error);
     }
-  // --- ADD PROFILE TO DEPENDENCY ARRAY ---
+
+    const fresh: StudentData = {
+      name: userName,
+      totalProblems: 0,
+      streakCount: 0,
+      achievements: []
+    };
+    setStudent(fresh);
+    localStorage.setItem('currentStudent', JSON.stringify(fresh));
   }, [profile]);
 
   if (!student) return null; // Or return a loading spinner
@@ -94,7 +100,7 @@ export default function Profile() {
         <Card>
           <CardContent className="py-5">
             <div className="text-muted-foreground text-sm">Accuracy</div>
-            <div className="text-2xl font-bold">95%</div>
+            <div className="text-2xl font-bold">{typeof examResults?.score === 'number' ? `${examResults.score}%` : 'N/A'}</div>
           </CardContent>
         </Card>
       </div>
