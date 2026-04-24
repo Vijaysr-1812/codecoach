@@ -2,100 +2,89 @@
 import { createContext, useState, useEffect, ReactNode } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { Loader2 } from 'lucide-react'; // Import a loading icon
+import { Loader2 } from 'lucide-react';
 
-// Define the shape of your profile data
-interface Profile {
+export interface Profile {
+  id: string;
   username: string;
-  // Add other profile fields here, e.g., avatar_url
+  email: string | null;
+  current_skill_level: 'Beginner' | 'Medium' | 'Expert';
+  streak_count: number;
+  total_problems: number;
+  last_active_date: string | null;
 }
 
-// Define the context shape
 interface AuthContextType {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
+  refreshProfile: () => Promise<void>;
 }
 
-// Create the context
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// A simple loading component to show while auth is checking
 const LoadingSpinner = () => (
-  <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#020817' /* This is a common Tailwind 'bg-background' dark color */ }}>
+  <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#020817' }}>
     <Loader2 className="h-8 w-8 animate-spin text-primary" />
   </div>
 );
 
-// Create the provider component
+async function fetchProfile(userId: string): Promise<Profile | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, username, email, current_skill_level, streak_count, total_problems, last_active_date')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) return null;
+  return data as Profile;
+}
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const refreshProfile = async () => {
+    if (!session?.user) return;
+    const p = await fetchProfile(session.user.id);
+    setProfile(p);
+  };
+
   useEffect(() => {
-    // 1. Get the initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
-      
-      // If there's a session, fetch the user's profile
       if (session) {
-        const { data: profileData, error } = await supabase
-          .from('profiles')
-          .select('username')
-          .eq('id', session.user.id)
-          .single();
-
-        if (profileData) {
-          setProfile(profileData);
-        }
+        const p = await fetchProfile(session.user.id);
+        setProfile(p);
       }
       setLoading(false);
     });
 
-    // 2. Listen for auth state changes (login, logout)
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        setSession(session);
-        
-        // If the user logs in, fetch their profile
-        if (_event === 'SIGNED_IN' && session) {
-          setLoading(true); // Show loading while fetching new profile
-          const { data: profileData, error } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('id', session.user.id)
-            .single();
+      (_event, newSession) => {
+        setSession(newSession);
 
-          if (profileData) {
-            setProfile(profileData);
-          }
-          setLoading(false); // Done fetching
+        if (_event === 'SIGNED_IN' && newSession) {
+          setTimeout(() => {
+            fetchProfile(newSession.user.id).then(setProfile);
+          }, 0);
         }
 
-        // If the user logs out, clear the profile
         if (_event === 'SIGNED_OUT') {
           setProfile(null);
         }
       }
     );
 
-    // Cleanup listener on component unmount
     return () => {
       authListener.subscription.unsubscribe();
     };
   }, []);
 
-  const value = {
-    session,
-    profile,
-    loading,
-  };
-
   return (
-    <AuthContext.Provider value={value}>
-      {/* Show loading spinner while checking auth, then show the app */}
+    <AuthContext.Provider value={{ session, profile, loading, refreshProfile }}>
       {loading ? <LoadingSpinner /> : children}
-    </AuthContext.Provider> 
+    </AuthContext.Provider>
   );
 };

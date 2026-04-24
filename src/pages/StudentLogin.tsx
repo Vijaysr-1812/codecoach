@@ -1,12 +1,12 @@
 'use client'; // This directive might be needed depending on your setup
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/components/ui/use-toast';
-import { Code, User, Chrome, Github, Facebook } from 'lucide-react';
+import { Code, User } from 'lucide-react';
 import Particles from '@/components/Particles';
 import { supabase } from '@/lib/supabase'; // Import the client
 import { useAuth } from '@/hooks/useAuth'; // Import the hook
@@ -18,14 +18,23 @@ const StudentLogin = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { session } = useAuth();
 
-  // If the user is already logged in, send them to their profile.
+  // If they were bounced here by ProtectedRoute, go back to where they were headed.
+  const redirectTo =
+    (location.state as { from?: { pathname: string; search: string } } | null)?.from?.pathname
+      ? `${(location.state as { from: { pathname: string; search: string } }).from.pathname}${
+          (location.state as { from: { pathname: string; search: string } }).from.search || ''
+        }`
+      : '/profile';
+
+  // If the user is already logged in, send them to their intended destination.
   useEffect(() => {
     if (session) {
-      navigate('/profile');
+      navigate(redirectTo, { replace: true });
     }
-  }, [session, navigate]);
+  }, [session, navigate, redirectTo]);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -102,24 +111,6 @@ const StudentLogin = () => {
   };
   // ▲▲▲ END OF UPDATED FUNCTION ▲▲▲
 
-  const handleSocialLogin = async (provider: 'google' | 'github' | 'facebook') => {
-    setLoading(true);
-    toast({ title: `Redirecting to ${provider} login...` });
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: provider,
-    });
-
-    if (error) {
-      toast({
-        title: 'Social Login Failed',
-        description: error.message,
-        variant: 'destructive',
-      });
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <Particles />
@@ -130,7 +121,7 @@ const StudentLogin = () => {
             <Code className="h-12 w-12 text-primary animate-pulse" />
           </div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            CodeLab Access
+            CodeCoach Access
           </h1>
           <p className="text-muted-foreground">
             {isSignup ? 'Create your account' : 'Welcome back'}
@@ -145,8 +136,8 @@ const StudentLogin = () => {
             </CardTitle>
             <CardDescription>
               {isSignup
-                ? 'Create a new account to access CodeLab'
-                : 'Sign in to your CodeLab account'}
+                ? 'Create a new account to access CodeCoach'
+                : 'Sign in to your CodeCoach account'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -194,33 +185,6 @@ const StudentLogin = () => {
             >
               {loading ? 'Processing...' : (isSignup ? 'Create Account' : 'Login')}
             </Button>
-
-            <div className="flex items-center justify-center gap-3 mt-4">
-              <Button
-                variant="outline"
-                className="flex items-center gap-2"
-                onClick={() => handleSocialLogin('google')}
-                disabled={loading}
-              >
-                <Chrome className="h-3 w-3" /> Google
-              </Button>
-              <Button
-                variant="outline"
-                className="flex items-center"
-                onClick={() => handleSocialLogin('github')}
-                disabled={loading}
-              >
-                <Github className="h-3 w-3" /> GitHub
-              </Button>
-              <Button
-                variant="outline"
-                className="flex items-center gap-2"
-                onClick={() => handleSocialLogin('facebook')}
-                disabled={loading}
-              >
-                <Facebook className="h-3 w-3" /> Facebook
-              </Button>
-            </div>
 
             <div className="text-center mt-2">
               <Button

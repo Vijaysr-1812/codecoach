@@ -1,161 +1,159 @@
-# 🚀 CodeLab  
+# 🚀 CodeCoach — AI-Powered Coding Evaluation Platform
 
-<<<<<<< HEAD
-1. clone the repository
-2. cd into codecoach
-3. npm i
-4. npm run dev
-   !!! when running run on domain not on localhost to avoid the connection/rendering issues!!!
-
-
-
-
-
-
-
-
-=======
->>>>>>> a7a1e74d52174cf2c64029370e9d414844026e75
-![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)  
-![FastAPI](https://img.shields.io/badge/FastAPI-Backend-success?logo=fastapi)  
-![React](https://img.shields.io/badge/Frontend-React%20%2B%20TS-61DBFB?logo=react)  
-![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791?logo=postgresql)  
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)  
+![React](https://img.shields.io/badge/Frontend-React%20%2B%20TS-61DBFB?logo=react)
+![Supabase](https://img.shields.io/badge/Backend-Supabase-3ECF8E?logo=supabase)
+![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-4285F4?logo=google)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
-##Live Website
-https://cody123.vercel.app/
-
-## 🌟 Overview  
-
-**CodeLab** is an advanced **web-based coding evaluation platform**.  
-It provides **secure programming assessments**, **real-time monitoring**, and **AI-powered test case generation** to make coding tests and learning more efficient.
-
-🔹 Multi-language support (C, C++, Python, Java, SQL)  
-🔹 Integrated **Monaco editor** for smooth coding experience  
-🔹 **AI-based test case generation & evaluation**  
-🔹 **Secure containerized execution** with Docker  
+## 🌐 Live Website
+**https://cody123.vercel.app/**
 
 ---
 
-## ✨ Features  
+## 🌟 Overview
 
-### 💻 Core  
-- ⚡ Real-time **code execution** inside isolated Docker containers  
-- 📝 **Monaco-based IDE** with autocomplete & syntax highlighting  
-- 🌍 Multi-language support – C, C++, Python, Java, SQL  
-- 🤖 **Automated AI test case generation**  
+**CodeCoach** is an advanced **web-based coding evaluation and learning platform** powered by **Google Gemini AI**.  
+It provides **secure programming assessments**, **real-time AI mentoring**, **personalized learning roadmaps**, and **competitive leaderboards**.
 
-### 🛡️ Security & Monitoring  
-- 🔍 **Plagiarism detection** (copy-paste & similarity checks)  
-- 🖥️ **Proctor dashboard** to monitor students in real-time  
-- 🌐 **IP tracking & session management**  
-- 🛑 **Resource-limited execution** for safety  
-
-### ⚙️ Admin Tools  
-- 👥 **Role-based user management**  
-- 📊 Performance analytics & submission insights  
-- 📦 Bulk **import/export of users & results**  
-- 🎯 Custom test case creation  
+🔹 Multi-language support (C, C++, Python, Java, JavaScript)  
+🔹 **Google Gemini AI** for chat, problem generation, code review & viva  
+🔹 **Real-time code execution** via OneCompiler API  
+🔹 **Supabase** for authentication, database & real-time data  
+🔹 **Proctored exam environment** with tab-switch & copy-paste detection  
 
 ---
 
-## 🏗️ Tech Stack  
+## ✨ AI Features
 
-**Frontend** 🎨  
-- React + TypeScript  
-- Tailwind CSS + Shadcn UI  
-- Monaco Editor  
-
-**Backend** 🔧  
-- FastAPI (Python)  
-- PostgreSQL + SQLAlchemy  
-- Pydantic schemas  
-- JWT Authentication  
-
-**AI Integration** 🤖  
-- OpenAI API for test case generation & structured evaluation  
-
-**Deployment** 🐳  
-- Docker & Docker Compose  
+| Feature | Description |
+|---|---|
+| 🤖 **AI Chat Assistant** | Context-aware chat knowing your current code + problem |
+| 🎯 **Dynamic Problem Generator** | AI generates infinite problems by topic + difficulty |
+| 💡 **Smart Progressive Hints** | 3-level hints: concept → algorithm → pseudocode |
+| 🔍 **AI Code Review** | Rates code quality, efficiency, readability after run |
+| 🎓 **Viva Question Generator** | AI generates 3 interview questions from your solution |
 
 ---
 
-## 📂 Project Structure  
+## ✨ Core Features
 
+### 💻 Coding
+- ⚡ Real-time code execution (Python, JS, Java, C++, C)
+- 📝 Syntax-highlighted code editor per language
+- 🌍 Multi-language support with per-language templates
+- 🤖 AI-powered test case generation
+
+### 🛡️ Security & Monitoring
+- 🔍 Tab-switch detection during exams
+- 📋 Copy/paste blocking during exams
+- 🖥️ Admin proctor dashboard with live student monitoring
+- 🛑 Camera monitoring during exam
+
+### 📊 Analytics
+- 🏆 Real-time competitive leaderboard from Supabase
+- 📈 Monthly performance chart on profile
+- 🎯 Score, Speed & Efficiency metrics per exam
+- 🗺️ Personalized learning roadmap (Beginner → Medium → Expert)
+
+---
+
+## 🏗️ Tech Stack
+
+**Frontend** 🎨
+- React 18 + TypeScript
+- Tailwind CSS + Shadcn/Radix UI
+- TanStack React Query
+- React Router DOM
+
+**Backend & Database** 🔧
+- Supabase (PostgreSQL + Auth + Real-time)
+- Row Level Security (RLS)
+- Supabase Triggers for auto profile creation
+
+**AI Integration** 🤖
+- Google Gemini 1.5 Flash API (`@google/generative-ai`)
+- OneCompiler API for sandboxed code execution
+
+**Deployment** 🚀
+- Vercel (frontend)
+- Supabase Cloud (backend)
+
+---
+
+## ⚡ Local Setup
+
+### 1. Clone & Install
 ```bash
-codelb/
-├── backend/ # FastAPI backend
-│ ├── app/
-│ │ ├── api/v1/endpoints/ # API endpoints
-│ │ ├── core/ # Core configuration
-│ │ ├── models/ # Database models
-│ │ ├── schemas/ # Pydantic schemas
-│ │ └── services/ # Business logic
-│ ├── requirements.txt # Python dependencies
-│ ├── Dockerfile # Backend container
-│ ├── init_db.py # Database initialization
-│ └── start.sh # Startup script
-├── src/
-│ ├── components/ # UI components
-│ │ └── CodeEditor.tsx # Enhanced Monaco editor
-│ ├── services/
-│ │ └── api.ts # API client
-│ ├── types/
-│ │ └── index.ts # TypeScript interfaces
-│ └── pages/
-│ ├── Exam.tsx # Exam interface with APIs
-│ └── StudentLogin.tsx # Authentication UI
-├── docker-compose.yml # Full stack deployment
-├── Dockerfile.frontend # Frontend container
-└── README.md # Documentation
+git clone <repo-url>
+cd codecoach
+npm install
 ```
 
----
+### 2. Set Environment Variables
+Create a `.env` file:
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_GEMINI_API_KEY=your-gemini-api-key
+VITE_ONECOMPILER_API_KEY=your-rapidapi-key
+```
 
-## ⚡ Installation & Setup  
+### 3. Get API Keys
+| Key | Where to get |
+|---|---|
+| `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | [supabase.com](https://supabase.com) → Project Settings → API |
+| `VITE_GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/app/apikey) → Create API key (FREE) |
+| `VITE_ONECOMPILER_API_KEY` | [rapidapi.com/onecompiler](https://rapidapi.com/OneCompiler/api/onecompiler-apis) |
 
-### 📋 Prerequisites  
-- Node.js **v18+**  
-- Python **3.10+**  
-- Docker & Docker Compose  
-- PostgreSQL  
-- OpenAI API key  
+### 4. Run the Supabase Schema
+Paste the SQL from `supabase-schema.sql` into your Supabase SQL Editor and run it.
 
-### 🔧 Backend Setup  
+### 5. Start Dev Server
 ```bash
-cd backend
-pip install -r requirements.txt
-python init_db.py
-./start.sh
-
-cd src
-npm install
 npm run dev
 ```
+
+> ⚠️ **Note**: Run on a domain (not localhost) for camera/proctoring features to work correctly.
+
+---
+
+## 🗄️ Database Schema (Supabase)
+
 ```
-DATABASE_URL=postgresql://user:password@localhost:5432/codelab
-JWT_SECRET=your-secret-key
-OPENAI_API_KEY=your-openai-api-key
-```
-```
-docker-compose up --build -d
+profiles         → user stats, skill level, streak
+exam_submissions → score / speed / efficiency per attempt
+topic_progress   → roadmap completion tracking
+achievements     → unlocked badges
 ```
 
-⚡ Execution Flow:
+---
 
-  Student submits code → stored in DB
-  
-  AI generates test cases → validated & saved
-  
-  Code runs in Docker (CPU/memory/time limited)
-  
-  Outputs validated against expected results
-  
-  Detailed feedback shown on student dashboard
+## 🤖 AI Flow (Gemini)
 
+```
+User asks question
+       ↓
+gemini.ts builds context (current code + problem + language + chat history)
+       ↓
+Gemini 1.5 Flash responds
+       ↓
+Response streamed to chat UI
+```
 
+```
+"Generate Problem" clicked
+       ↓
+Gemini generates JSON {title, description, examples, hints, testCases}
+       ↓
+Problem rendered in UI + starter code injected into editor
+```
 
-
-
+```
+Code runs successfully
+       ↓
+Gemini reviews code → rates Quality / Efficiency / Readability (0-10)
+       ↓
+AI Viva generates 3 interview questions from the solution
+```

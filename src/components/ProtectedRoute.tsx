@@ -1,26 +1,26 @@
 import { useAuth } from '@/hooks/useAuth';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 
-// You can add a loading spinner component here
 const LoadingSpinner = () => (
   <div className="flex items-center justify-center min-h-screen">
-    <div>Loading...</div>
+    <Loader2 className="h-8 w-8 animate-spin text-primary" />
   </div>
 );
 
 const ProtectedRoute = () => {
   const { session, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return <LoadingSpinner />;
   }
 
   if (!session) {
-    // If no session, redirect to the login page
-    return <Navigate to="/login" replace />;
+    // Preserve the intended destination so we can return after login.
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  // If there is a session, render the child routes
   return <Outlet />;
 };
 

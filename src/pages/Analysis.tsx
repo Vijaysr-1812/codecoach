@@ -4,49 +4,101 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Trophy, 
-  TrendingUp, 
-  Clock, 
-  Target, 
+import {
+  Trophy,
+  TrendingUp,
+  Clock,
+  Target,
   Award,
   BarChart3,
   ArrowRight,
-  Star
+  Star,
+  Loader2
 } from 'lucide-react';
 import Particles from '@/components/Particles';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
+
+interface QuestionResult {
+  questionId: string;
+  title: string;
+  marks: number;
+  scored: number;
+  status: 'passed' | 'failed';
+}
 
 interface ExamResult {
-  studentName: string;
-  studentRoll: string;
+  id: string;
   score: number;
   speed: number;
   efficiency: number;
-  completedAt: string;
+  time_taken: number;
+  created_at: string;
+  question_results: QuestionResult[];
+  profiles: { username: string } | null;
 }
 
 const Analysis = () => {
   const navigate = useNavigate();
+  const { session } = useAuth();
   const [results, setResults] = useState<ExamResult | null>(null);
-  const [rank, setRank] = useState(1);
+  const [rank, setRank] = useState<number | null>(null);
+  const [totalParticipants, setTotalParticipants] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedResults = localStorage.getItem('examResults');
-    if (savedResults) {
-      const parsedResults = JSON.parse(savedResults);
-      setResults(parsedResults);
-      
-      // Generate random rank based on score
-      const calculatedRank = Math.max(1, Math.floor((100 - parsedResults.score) / 5) + 1);
-      setRank(calculatedRank);
-    } else {
-      navigate('/login');
-    }
-  }, [navigate]);
+    if (!session?.user) return;
 
-  if (!results) {
-    return <div>Loading...</div>;
+    const fetchResults = async () => {
+      setLoading(true);
+      const userId = session.user.id;
+
+      // Get latest exam submission for this user
+      const { data, error } = await supabase
+        .from('exam_submissions')
+        .select(`
+          id, score, speed, efficiency, time_taken, created_at, question_results,
+          profiles ( username )
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !data) {
+        navigate('/exam');
+        return;
+      }
+
+      setResults(data as unknown as ExamResult);
+
+      // Compute rank: count users with higher score
+      const { count: higherCount } = await supabase
+        .from('exam_submissions')
+        .select('id', { count: 'exact', head: true })
+        .gt('score', data.score);
+
+      const { count: total } = await supabase
+        .from('exam_submissions')
+        .select('id', { count: 'exact', head: true });
+
+      setRank((higherCount ?? 0) + 1);
+      setTotalParticipants(total ?? 1);
+      setLoading(false);
+    };
+
+    fetchResults();
+  }, [session, navigate]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
   }
+
+  if (!results) return null;
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-500';
@@ -63,11 +115,17 @@ const Analysis = () => {
   };
 
   const performance = getPerformanceLevel(results.score);
+  const percentile = totalParticipants > 0
+    ? Math.round(((totalParticipants - (rank ?? 1)) / totalParticipants) * 100)
+    : 0;
+  const username = (results.profiles as any)?.username || 'Student';
+  const minutes = Math.floor((results.time_taken ?? 0) / 60);
+  const seconds = (results.time_taken ?? 0) % 60;
 
   return (
     <div className="min-h-screen p-4">
       <Particles />
-      
+
       {/* Header */}
       <div className="max-w-6xl mx-auto mb-8">
         <div className="text-center space-y-4">
@@ -89,8 +147,10 @@ const Analysis = () => {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-2xl">{results.studentName}</CardTitle>
-                <CardDescription>Roll Number: {results.studentRoll}</CardDescription>
+                <CardTitle className="text-2xl">{username}</CardTitle>
+                <CardDescription>
+                  Submitted {new Date(results.created_at).toLocaleString()} &bull; Time used: {minutes}m {seconds}s
+                </CardDescription>
               </div>
               <Badge className={`${performance.color} text-white px-4 py-2 text-lg`}>
                 {performance.level}
@@ -101,7 +161,6 @@ const Analysis = () => {
 
         {/* Main Results Grid */}
         <div className="grid md:grid-cols-3 gap-6">
-          {/* Overall Score */}
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -116,13 +175,12 @@ const Analysis = () => {
                 </div>
                 <Progress value={results.score} className="h-3" />
                 <p className="text-sm text-muted-foreground">
-                  You scored better than {100 - rank * 5}% of students
+                  Better than {percentile}% of participants
                 </p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Speed Analysis */}
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -132,18 +190,15 @@ const Analysis = () => {
             </CardHeader>
             <CardContent>
               <div className="text-center space-y-4">
-                <div className="text-5xl font-bold text-accent">
-                  {results.speed}%
-                </div>
+                <div className="text-5xl font-bold text-accent">{results.speed}%</div>
                 <Progress value={results.speed} className="h-3" />
                 <p className="text-sm text-muted-foreground">
-                  Lines of code per minute: {Math.floor(results.speed / 10) + 5}
+                  Time efficiency score
                 </p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Efficiency Rating */}
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -153,12 +208,10 @@ const Analysis = () => {
             </CardHeader>
             <CardContent>
               <div className="text-center space-y-4">
-                <div className="text-5xl font-bold text-green-500">
-                  {results.efficiency}%
-                </div>
+                <div className="text-5xl font-bold text-green-500">{results.efficiency}%</div>
                 <Progress value={results.efficiency} className="h-3" />
                 <p className="text-sm text-muted-foreground">
-                  Algorithm complexity score
+                  Test cases passed
                 </p>
               </div>
             </CardContent>
@@ -167,48 +220,52 @@ const Analysis = () => {
 
         {/* Detailed Breakdown */}
         <div className="grid md:grid-cols-2 gap-6">
-          {/* Performance Breakdown */}
+          {/* Question Results */}
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BarChart3 className="h-5 w-5" />
-                Performance Breakdown
+                Question Breakdown
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span>Problem Solving</span>
-                    <span className="font-semibold">{results.score}%</span>
+              {results.question_results && results.question_results.length > 0 ? (
+                results.question_results.map((q, i) => (
+                  <div key={i}>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-sm">{q.title}</span>
+                      <span className={`text-sm font-semibold ${q.status === 'passed' ? 'text-green-500' : 'text-red-400'}`}>
+                        {q.scored}/{q.marks}
+                      </span>
+                    </div>
+                    <Progress value={(q.scored / q.marks) * 100} className="h-2" />
                   </div>
-                  <Progress value={results.score} className="h-2" />
-                </div>
-                
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span>Code Quality</span>
-                    <span className="font-semibold">{results.efficiency}%</span>
+                ))
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <span>Problem Solving</span>
+                      <span className="font-semibold">{results.score}%</span>
+                    </div>
+                    <Progress value={results.score} className="h-2" />
                   </div>
-                  <Progress value={results.efficiency} className="h-2" />
-                </div>
-                
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span>Time Management</span>
-                    <span className="font-semibold">{results.speed}%</span>
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <span>Code Quality</span>
+                      <span className="font-semibold">{results.efficiency}%</span>
+                    </div>
+                    <Progress value={results.efficiency} className="h-2" />
                   </div>
-                  <Progress value={results.speed} className="h-2" />
-                </div>
-                
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span>Syntax Accuracy</span>
-                    <span className="font-semibold">{Math.min(95, results.score + 10)}%</span>
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <span>Time Management</span>
+                      <span className="font-semibold">{results.speed}%</span>
+                    </div>
+                    <Progress value={results.speed} className="h-2" />
                   </div>
-                  <Progress value={Math.min(95, results.score + 10)} className="h-2" />
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
@@ -231,7 +288,6 @@ const Analysis = () => {
                     </div>
                   </div>
                 )}
-                
                 {results.speed >= 70 && (
                   <div className="flex items-center gap-3 p-3 bg-accent/10 rounded-lg">
                     <Clock className="h-5 w-5 text-accent" />
@@ -241,7 +297,6 @@ const Analysis = () => {
                     </div>
                   </div>
                 )}
-                
                 {results.efficiency >= 75 && (
                   <div className="flex items-center gap-3 p-3 bg-green-500/10 rounded-lg">
                     <TrendingUp className="h-5 w-5 text-green-500" />
@@ -251,7 +306,6 @@ const Analysis = () => {
                     </div>
                   </div>
                 )}
-                
                 <div className="flex items-center gap-3 p-3 bg-purple-500/10 rounded-lg">
                   <Trophy className="h-5 w-5 text-purple-500" />
                   <div>
@@ -273,11 +327,9 @@ const Analysis = () => {
                   <Trophy className="h-12 w-12 text-primary" />
                 </div>
               </div>
-              <h2 className="text-3xl font-bold">
-                Rank #{rank}
-              </h2>
+              <h2 className="text-3xl font-bold">Rank #{rank}</h2>
               <p className="text-lg text-muted-foreground">
-                You ranked {rank}{rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th'} out of all participants
+                You ranked {rank}{rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th'} out of {totalParticipants} participants
               </p>
             </div>
           </CardContent>
@@ -285,20 +337,12 @@ const Analysis = () => {
 
         {/* Action Buttons */}
         <div className="flex justify-center space-x-4">
-          <Button 
-            onClick={() => navigate('/leaderboard')} 
-            className="neon-button"
-          >
+          <Button onClick={() => navigate('/leaderboard')} className="neon-button">
             <Trophy className="h-4 w-4 mr-2" />
             View Leaderboard
             <ArrowRight className="h-4 w-4 ml-2" />
           </Button>
-          
-          <Button 
-            variant="outline" 
-            onClick={() => navigate('/')}
-            className="border-primary/20 hover:border-primary/40"
-          >
+          <Button variant="outline" onClick={() => navigate('/')} className="border-primary/20 hover:border-primary/40">
             Back to Home
           </Button>
         </div>

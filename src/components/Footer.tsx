@@ -18,7 +18,7 @@ export default function Footer() {
           <Link to="/developers" className="hover:text-primary">Developers</Link>
           <Link to="/exam" className="hover:text-primary">Examination</Link>
         </div>
-        <div className="text-xs text-muted-foreground/70 mt-4">© {new Date().getFullYear()} CodeLab. All rights reserved.</div>
+        <div className="text-xs text-muted-foreground/70 mt-4">© {new Date().getFullYear()} CodeCoach. All rights reserved.</div>
       </div>
     </footer>
   );

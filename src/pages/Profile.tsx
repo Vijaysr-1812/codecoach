@@ -2,45 +2,99 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { User, Flame, CheckCircle2, Code2, BookOpenCheck, Trophy, BarChart3, MessagesSquare } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth'; // --- IMPORT AUTH HOOK ---
+import { User, Flame, CheckCircle2, Code2, BookOpenCheck, Trophy, BarChart3, Loader2 } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 
-interface StudentData {
-  name: string;
-  totalProblems: number;
-  streakCount: number;
-  achievements: string[];
+interface MonthlyData {
+  month: string;
+  count: number;
+}
+
+interface Achievement {
+  achievement_name: string;
+  earned_at: string;
 }
 
 export default function Profile() {
-  const [student, setStudent] = useState<StudentData | null>(null);
   const navigate = useNavigate();
-  // --- GET PROFILE FROM AUTH HOOK ---
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
+  const [accuracy, setAccuracy] = useState<number>(0);
+  const [loadingExtra, setLoadingExtra] = useState(true);
 
   useEffect(() => {
-    // --- USE PROFILE USERNAME, FALLBACK TO 'User' ---
-    const userName = profile?.username || 'User'; 
-    const stored = localStorage.getItem('currentStudent');
-    
-    if (stored) {
-      const parsedData = JSON.parse(stored);
-      parsedData.name = userName; // Update with the correct username
-      setStudent(parsedData);
-    } else {
-      const fresh: StudentData = {
-        name: userName, // Set the correct username
-        totalProblems: 0,
-        streakCount: 0,
-        achievements: []
-      };
-      setStudent(fresh);
-      localStorage.setItem('currentStudent', JSON.stringify(fresh));
-    }
-  // --- ADD PROFILE TO DEPENDENCY ARRAY ---
-  }, [profile]);
+    if (!session?.user) return;
 
-  if (!student) return null; // Or return a loading spinner
+    const fetchExtras = async () => {
+      setLoadingExtra(true);
+      const userId = session.user.id;
+
+      // Fetch achievements
+      const { data: achData } = await supabase
+        .from('achievements')
+        .select('achievement_name, earned_at')
+        .eq('user_id', userId)
+        .order('earned_at', { ascending: false });
+
+      // Fetch last 12 months of exam submissions for chart
+      const since = new Date();
+      since.setMonth(since.getMonth() - 11);
+      const { data: subData } = await supabase
+        .from('exam_submissions')
+        .select('score, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', since.toISOString());
+
+      // Build monthly counts
+      const counts: Record<string, number> = {};
+      for (let i = 0; i < 12; i++) {
+        const d = new Date();
+        d.setMonth(d.getMonth() - (11 - i));
+        const key = d.toLocaleString('default', { month: 'short' });
+        counts[key] = 0;
+      }
+
+      if (subData) {
+        subData.forEach(s => {
+          const key = new Date(s.created_at).toLocaleString('default', { month: 'short' });
+          if (counts[key] !== undefined) counts[key]++;
+        });
+
+        // Calculate average accuracy from exam scores
+        if (subData.length > 0) {
+          const avg = subData.reduce((sum, s) => sum + s.score, 0) / subData.length;
+          setAccuracy(Math.round(avg));
+        }
+      }
+
+      setAchievements(achData || []);
+      setMonthlyData(Object.entries(counts).map(([month, count]) => ({ month, count })));
+      setLoadingExtra(false);
+    };
+
+    fetchExtras();
+  }, [session]);
+
+  if (!profile) {
+    return (
+      <div className="max-w-3xl mx-auto px-6 py-16 flex flex-col items-center justify-center text-center gap-4 min-h-[60vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        <h2 className="text-xl font-semibold">Loading your profile…</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          If this hangs for more than a few seconds, your profile may not have been created yet.
+          Try signing out and back in.
+        </p>
+        <div className="flex gap-2 mt-2">
+          <Button variant="outline" onClick={() => navigate('/')}>Go Home</Button>
+          <Button onClick={() => navigate('/login')}>Sign in again</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const maxCount = Math.max(...monthlyData.map(d => d.count), 1);
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10">
@@ -50,51 +104,50 @@ export default function Profile() {
             <User className="h-6 w-6 text-primary" />
           </div>
           <div>
-            {/* This will now show the correct name */}
-            <h1 className="text-2xl font-semibold">Welcome back, {student.name}</h1>
+            <h1 className="text-2xl font-semibold">Welcome back, {profile.username}</h1>
+            <p className="text-sm text-muted-foreground capitalize">{profile.current_skill_level} level</p>
           </div>
         </div>
         <div className="flex gap-2">
           <Button onClick={() => navigate('/practice')}>
-            <Code2 className="h-4 w-4 mr-2"/>Enter Practice
+            <Code2 className="h-4 w-4 mr-2" />Enter Practice
           </Button>
           <Button onClick={() => navigate('/exam')} variant="outline">
-            <BookOpenCheck className="h-4 w-4 mr-2"/>Enter Examination
+            <BookOpenCheck className="h-4 w-4 mr-2" />Enter Examination
           </Button>
         </div>
       </div>
 
-      {/* ... (rest of your component is unchanged and fine) ... */}
-      
+      {/* Stats Cards */}
       <div className="grid md:grid-cols-4 gap-4 mb-8">
         <Card>
           <CardContent className="py-5">
             <div className="text-muted-foreground text-sm">Day Streak</div>
             <div className="flex items-center gap-2 mt-1">
-              <Flame className="h-5 w-5 text-orange-500"/>
-              <span className="text-2xl font-bold">{student.streakCount}</span>
+              <Flame className="h-5 w-5 text-orange-500" />
+              <span className="text-2xl font-bold">{profile.streak_count}</span>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-5">
             <div className="text-muted-foreground text-sm">Problems Solved</div>
-            <div className="text-2xl font-bold">{student.totalProblems}</div>
+            <div className="text-2xl font-bold">{profile.total_problems}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-5">
             <div className="text-muted-foreground text-sm">Achievements</div>
             <div className="flex items-center gap-2 mt-1">
-              <Trophy className="h-5 w-5 text-amber-400"/>
-              <span className="text-2xl font-bold">{student.achievements.length}</span>
+              <Trophy className="h-5 w-5 text-amber-400" />
+              <span className="text-2xl font-bold">{achievements.length}</span>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-5">
-            <div className="text-muted-foreground text-sm">Accuracy</div>
-            <div className="text-2xl font-bold">95%</div>
+            <div className="text-muted-foreground text-sm">Avg. Score</div>
+            <div className="text-2xl font-bold">{accuracy > 0 ? `${accuracy}%` : '—'}</div>
           </CardContent>
         </Card>
       </div>
@@ -138,43 +191,64 @@ export default function Profile() {
       </div>
 
       <div className="mt-8 grid md:grid-cols-2 gap-6">
+        {/* Achievements */}
         <Card>
           <CardHeader>
             <CardTitle>Recent Achievements</CardTitle>
           </CardHeader>
           <CardContent>
-            {student.achievements.length === 0 ? (
+            {loadingExtra ? (
+              <div className="text-sm text-muted-foreground">Loading...</div>
+            ) : achievements.length === 0 ? (
               <div className="text-sm text-muted-foreground">
                 No achievements yet. Solve problems to unlock badges.
               </div>
             ) : (
               <ul className="text-sm space-y-2">
-                {student.achievements.map((a, i) => (
+                {achievements.slice(0, 5).map((a, i) => (
                   <li key={i} className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-500"/>{a}
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    {a.achievement_name}
                   </li>
                 ))}
               </ul>
             )}
           </CardContent>
         </Card>
+
+        {/* Performance Chart */}
         <Card>
           <CardHeader>
-            <CardTitle>Performance Analytics</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Performance Analytics
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-32 bg-gradient-to-r from-primary/10 to-accent/10 rounded-md flex items-end gap-1 p-2">
-              {Array.from({ length: 12 }).map((_, i) => (
-                <div 
-                  key={i} 
-                  className="flex-1 bg-primary/40 rounded-t" 
-                  style={{ height: `${20 + (i*5)%80}%` }} 
-                />
-              ))}
-            </div>
-            <div className="text-xs text-muted-foreground mt-2">
-              Monthly solved problems
-            </div>
+            {loadingExtra ? (
+              <div className="h-32 animate-pulse bg-muted rounded-md" />
+            ) : (
+              <>
+                <div className="h-32 flex items-end gap-1 p-2 bg-gradient-to-r from-primary/10 to-accent/10 rounded-md">
+                  {monthlyData.map((d, i) => (
+                    <div
+                      key={i}
+                      className="flex-1 bg-primary/60 rounded-t transition-all hover:bg-primary"
+                      style={{ height: `${(d.count / maxCount) * 100 || 4}%` }}
+                      title={`${d.month}: ${d.count} exams`}
+                    />
+                  ))}
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground mt-2">
+                  {monthlyData.map((d, i) => (
+                    <span key={i}>{d.month}</span>
+                  ))}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Monthly exams taken (last 12 months)
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

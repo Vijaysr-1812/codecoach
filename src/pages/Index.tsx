@@ -83,7 +83,7 @@ const Index = () => {
               className="neon-button text-lg px-8 py-4"
             >
               <Play className="h-5 w-5 mr-2" />
-              Enter CodeLab
+              Enter CodeCoach
               <ArrowRight className="h-5 w-5 ml-2" />
             </Button>
             <Button size="lg" variant="outline" onClick={() => navigate('/developers')} className="text-lg px-8 py-4 border-primary/20 hover:border-primary/40">

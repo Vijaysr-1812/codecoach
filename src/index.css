@@ -4,7 +4,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CodeLab Design System - Cyberpunk Coding Theme */
+/* CodeCoach Design System - Cyberpunk Coding Theme */
 
 @layer base {
   :root {
@@ -40,7 +40,7 @@
     --input: 217 32.6% 17.5%;
     --ring: 184 100% 60%;
 
-    /* CodeLab specific variables */
+    /* CodeCoach specific variables */
     --neon-cyan: 184 100% 60%;
     --neon-green: 158 100% 50%;
     --neon-purple: 271 100% 65%;

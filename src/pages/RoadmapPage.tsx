@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Loader2, ArrowLeft, Map, Share2 } from 'lucide-react';
+import { Loader2, ArrowLeft, Map } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROADMAP_DATA } from '@/data/roadmapData';
 import RoadmapTree from '@/components/RoadmapTree';
@@ -11,33 +11,20 @@ export default function RoadmapPage() {
   const { session } = useAuth();
   const navigate = useNavigate();
   const [level, setLevel] = useState<string | null>(null);
-  const [completedTopics, setCompletedTopics] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       if (!session?.user) return;
-      
+
       try {
-        // 1. Get Level
         const { data: profile } = await supabase
           .from('profiles')
           .select('current_skill_level')
           .eq('id', session.user.id)
           .single();
 
-        // 2. Get Completed Topics from our new progress table
-        const { data: progress } = await supabase
-          .from('topic_progress')
-          .select('topic_id')
-          .eq('user_id', session.user.id);
-
         setLevel(profile?.current_skill_level || 'Beginner');
-        
-        if (progress) {
-          // Extract just the IDs into a simple array
-          setCompletedTopics(progress.map(p => p.topic_id));
-        }
       } catch (error) {
         console.error('Error fetching roadmap data:', error);
       } finally {
@@ -47,6 +34,8 @@ export default function RoadmapPage() {
 
     fetchData();
   }, [session]);
+
+  const completedTopics: string[] = [];
 
   if (loading) {
     return (
@@ -64,13 +53,13 @@ export default function RoadmapPage() {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-cyan-500/20 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate('/profile')}
+          <Button
+            variant="ghost"
+            onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/profile'))}
             className="text-cyan-300 hover:text-white hover:bg-cyan-500/10"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Profile
+            Back
           </Button>
           <div className="flex items-center gap-3">
             <Map className="w-5 h-5 text-cyan-400" />
@@ -78,24 +67,25 @@ export default function RoadmapPage() {
               <span className="text-cyan-400">{level}</span> Learning Path
             </h1>
           </div>
-          <Button variant="outline" size="sm" className="border-cyan-500/30 text-cyan-300 hidden sm:flex">
-            <Share2 className="w-4 h-4 mr-2" /> Share
-          </Button>
+          <div className="w-[88px] hidden sm:block" />
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-12">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4 bg-gradient-to-r from-cyan-400 to-green-400 bg-clip-text text-transparent">
-            Your Personalized Roadmap
+        <div className="text-center mb-10">
+          <span className="inline-block text-xs font-mono tracking-[0.3em] text-cyan-400/70 mb-3">
+            PERSONALIZED CURRICULUM
+          </span>
+          <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-cyan-300 via-blue-400 to-purple-400 bg-clip-text text-transparent">
+            Your {level} Roadmap
           </h2>
-          <p className="text-gray-400">
-            Completed Topics: <span className="text-white font-bold">{completedTopics.length}</span>
+          <p className="text-gray-400 max-w-2xl mx-auto leading-relaxed">
+            A curated, step-by-step path to build real skills. Each milestone unlocks the next —
+            complete the challenge to progress.
           </p>
         </div>
 
-        {/* Render the Tree with data and completion status */}
         <RoadmapTree data={roadmapData} completedIds={completedTopics} />
       </main>
     </div>

@@ -42,7 +42,7 @@ const About = () => {
           </div>
           
           <h1 className="text-5xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
-            About CodeLab
+            About CodeCoach
           </h1>
           
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
@@ -64,9 +64,9 @@ const About = () => {
             </CardHeader>
             <CardContent className="text-center">
               <p className="text-lg leading-relaxed text-muted-foreground">
-                CodeLab bridges the gap between traditional assessment methods and modern 
-                programming education. We provide a comprehensive platform that not only 
-                tests coding abilities but also analyzes problem-solving patterns, code 
+                CodeCoach bridges the gap between traditional assessment methods and modern
+                programming education. We provide a comprehensive platform that not only
+                tests coding abilities but also analyzes problem-solving patterns, code
                 efficiency, and programming best practices.
               </p>
             </CardContent>

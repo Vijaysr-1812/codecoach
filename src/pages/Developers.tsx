@@ -2,128 +2,53 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Users, 
-  Brain, 
-  Server, 
-  Code, 
-  Cloud, 
+import {
+  Users,
+  Code,
   Palette,
   ArrowLeft,
-  Github,
-  Linkedin,
-  Mail
 } from 'lucide-react';
 import Particles from '@/components/Particles';
 
 const Developers = () => {
   const navigate = useNavigate();
 
-  const getDeveloperLinkedIn = (name: string) => {
-    const links = {
-      "Preetham AK": "https://www.linkedin.com/in/preetham-a-k-18b97931b",
-      "Bhuvan Bhat": "https://www.linkedin.com/in/bhuvan-bhat-313b1b371",
-      "Madan Kumar G S": "https://www.linkedin.com/in/madan-kumar-g-s-a61892321",
-      "Harshvardhan Goriya": "https://www.linkedin.com/in/harshavardhan-goriya-9953ab317",
-      "Brundha": "https://www.linkedin.com/in/sai-brundha-karanam-bb0a22344",
-      "Parinitha": "https://www.linkedin.com/in/parinitha-n-085115332"
-    };
-    return links[name as keyof typeof links] || "#";
-  };
-
-  const getDeveloperGithub = (name: string) => {
-    const links = {
-      "Preetham AK": "https://github.com/preethamak",
-      "Bhuvan Bhat": "https://github.com/bhuvan744",
-      "Madan Kumar G S": "https://github.com/madan1432",
-      "Harshvardhan Goriya": "https://github.com/GoriyaHarshavardhan",
-      "Brundha": "https://github.com/Saibrundha3",
-      "Parinitha": "https://github.com/ParinithaN1506"
-    };
-    return links[name as keyof typeof links] || "#";
-  };
-
   const developers = [
     {
-      name: "Preetham AK",
-      role: "AI Developer",
-      icon: Brain,
-      description: "Specializes in machine learning algorithms and AI-powered features for intelligent code assessment and automated grading systems.",
-      skills: ["Machine Learning", "TensorFlow", "Python", "Neural Networks", "NLP"],
-      color: "bg-purple-500/10 text-purple-500",
-      avatar: "P"
-    },
-    {
-      name: "Bhuvan Bhat",
-      role: "Backend Engineer",
-      icon: Server,
-      description: "Architecting robust server infrastructure and APIs that power the examination platform's core functionality and data management.",
-      skills: ["Node.js", "MongoDB", "REST APIs", "Microservices", "Redis"],
-      color: "bg-blue-500/10 text-blue-500",
-      avatar: "B"
-    },
-    {
-      name: "Madan Kumar G S",
-      role: "Fullstack Software Engineer",
+      name: "Vijay S R",
+      role: "Fullstack Developer",
       icon: Code,
       description: "Building end-to-end solutions, bridging frontend and backend technologies to create seamless user experiences.",
-      skills: ["React", "Node.js", "TypeScript", "PostgreSQL", "AWS"],
+      skills: ["React", "Node.js", "TypeScript", "PostgreSQL"],
       color: "bg-green-500/10 text-green-500",
-      avatar: "M"
+      avatar: "V"
     },
     {
-      name: "Harshvardhan Goriya",
-      role: "Cloud Engineer",
-      icon: Cloud,
-      description: "Managing cloud infrastructure and DevOps pipelines to ensure scalable, secure, and high-performance deployment solutions.",
-      skills: ["AWS", "Docker", "Kubernetes", "CI/CD", "Terraform"],
-      color: "bg-orange-500/10 text-orange-500",
-      avatar: "H"
+      name: "Vishal Sagar Murthy",
+      role: "Fullstack Developer",
+      icon: Code,
+      description: "Building end-to-end solutions, bridging frontend and backend technologies to create seamless user experiences.",
+      skills: ["React", "Node.js", "TypeScript", "PostgreSQL"],
+      color: "bg-blue-500/10 text-blue-500",
+      avatar: "V"
     },
     {
-      name: "Brundha",
+      name: "Keshav Sharma",
+      role: "Fullstack Developer",
+      icon: Code,
+      description: "Building end-to-end solutions, bridging frontend and backend technologies to create seamless user experiences.",
+      skills: ["React", "Node.js", "TypeScript", "PostgreSQL"],
+      color: "bg-yellow-500/10 text-yellow-500",
+      avatar: "K"
+    },
+    {
+      name: "Tharun P",
       role: "Frontend Developer",
       icon: Palette,
       description: "Crafting beautiful and intuitive user interfaces with modern design principles and responsive web technologies.",
       skills: ["React", "CSS3", "JavaScript", "UI/UX", "Responsive Design"],
       color: "bg-pink-500/10 text-pink-500",
-      avatar: "B"
-    },
-    {
-      name: "Parinitha",
-      role: "Frontend Developer",
-      icon: Palette,
-      description: "Creating engaging user experiences through innovative frontend solutions and interactive web components.",
-      skills: ["Vue.js", "HTML5", "SASS", "Animation", "Accessibility"],
-      color: "bg-cyan-500/10 text-cyan-500",
-      avatar: "P"
-    },
-    {
-      name: "VIJAY S R",
-      role: "Frontend Developer",
-      icon: Palette,
-      description: "Creating engaging user experiences through innovative frontend solutions and interactive web components.",
-      skills: ["Vue.js", "HTML5", "SASS", "Animation", "Accessibility"],
-      color: "bg-cyan-500/10 text-cyan-500",
-      avatar: "V"
-    },
-    {
-      name: "Keshav Sharma",
-      role: "Frontend Developer",
-      icon: Cloud,
-      description: "Creating engaging user experiences through innovative frontend solutions and interactive web components.",
-      skills: ["Vue.js", "HTML5", "SASS", "Animation", "Accessibility"],
-      color: "bg-yellow-500/10 text-yellow-500",
-      avatar: "K"
-    },
-    {
-      name: "Vishal Sagar Murthy",
-      role: "Frontend Developer",
-      icon: Server,
-      description: "Creating engaging user experiences through innovative frontend solutions and interactive web components.",
-      skills: ["Vue.js", "HTML5", "SASS", "Animation", "Accessibility"],
-      color: "bg-green-200/10 text-green-500",
-      avatar: "V"
+      avatar: "T"
     }
   ];
 
@@ -160,7 +85,7 @@ const Developers = () => {
           </Badge>
           
           <h1 className="text-5xl md:text-6xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            Developers Behind CodeLab
+            Developers Behind CodeCoach
           </h1>
           
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
@@ -219,29 +144,6 @@ const Developers = () => {
                       </div>
                     </div>
                     
-                    <div className="flex gap-2 pt-4">
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        className="flex-1"
-                        onClick={() => window.open(getDeveloperGithub(dev.name), '_blank')}
-                      >
-                        <Github className="h-4 w-4 mr-2" />
-                        GitHub
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        className="flex-1"
-                        onClick={() => window.open(getDeveloperLinkedIn(dev.name), '_blank')}
-                      >
-                        <Linkedin className="h-4 w-4 mr-2" />
-                        LinkedIn
-                      </Button>
-                      <Button size="sm" variant="outline">
-                        <Mail className="h-4 w-4" />
-                      </Button>
-                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -266,15 +168,15 @@ const Developers = () => {
               
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary mb-2">6</div>
+                  <div className="text-3xl font-bold text-primary mb-2">4</div>
                   <div className="text-sm text-muted-foreground">Team Members</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary mb-2">15+</div>
+                  <div className="text-3xl font-bold text-primary mb-2">10+</div>
                   <div className="text-sm text-muted-foreground">Technologies</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary mb-2">5</div>
+                  <div className="text-3xl font-bold text-primary mb-2">2</div>
                   <div className="text-sm text-muted-foreground">Specializations</div>
                 </div>
                 <div className="text-center">
@@ -289,7 +191,7 @@ const Developers = () => {
                   onClick={() => navigate('/about')} 
                   className="neon-button"
                 >
-                  Learn More About CodeLab
+                  Learn More About CodeCoach
                 </Button>
               </div>
             </CardContent>

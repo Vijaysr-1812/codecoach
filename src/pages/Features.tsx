@@ -103,8 +103,8 @@ const Features = () => {
             Powerful Features
           </h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            Discover the cutting-edge capabilities that make CodeLab the most advanced 
-            coding examination platform in the industry.
+            Discover the cutting-edge capabilities that make CodeCoach the most advanced
+            coding evaluation platform in the industry.
           </p>
         </div>
       </section>
@@ -237,9 +237,9 @@ const Features = () => {
       {/* CTA Section */}
       <section className="py-16 px-4">
         <div className="max-w-4xl mx-auto text-center space-y-6">
-          <h2 className="text-3xl font-bold">Ready to Experience CodeLab?</h2>
+          <h2 className="text-3xl font-bold">Ready to Experience CodeCoach?</h2>
           <p className="text-lg text-muted-foreground">
-            Join thousands of students and educators who trust CodeLab for their coding assessments.
+            Join thousands of students and educators who trust CodeCoach for their coding assessments.
           </p>
           
           <div className="flex justify-center space-x-4">
