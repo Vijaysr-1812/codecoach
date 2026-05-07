@@ -6,11 +6,13 @@ import { Loader2, ArrowLeft, Map } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROADMAP_DATA } from '@/data/roadmapData';
 import RoadmapTree from '@/components/RoadmapTree';
+import { fetchRoadmapProgress } from '@/lib/roadmapProgress';
 
 export default function RoadmapPage() {
   const { session } = useAuth();
   const navigate = useNavigate();
   const [level, setLevel] = useState<string | null>(null);
+  const [completedTopics, setCompletedTopics] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,6 +27,9 @@ export default function RoadmapPage() {
           .single();
 
         setLevel(profile?.current_skill_level || 'Beginner');
+
+        const progress = await fetchRoadmapProgress(session.user.id);
+        setCompletedTopics(progress);
       } catch (error) {
         console.error('Error fetching roadmap data:', error);
       } finally {
@@ -34,8 +39,6 @@ export default function RoadmapPage() {
 
     fetchData();
   }, [session]);
-
-  const completedTopics: string[] = [];
 
   if (loading) {
     return (

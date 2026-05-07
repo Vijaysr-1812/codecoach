@@ -6,12 +6,10 @@ import { Loader2 } from 'lucide-react';
 
 export interface Profile {
   id: string;
-  username: string;
-  email: string | null;
+  username: string | null;
   current_skill_level: 'Beginner' | 'Medium' | 'Expert';
   streak_count: number;
   total_problems: number;
-  last_active_date: string | null;
 }
 
 interface AuthContextType {
@@ -32,7 +30,7 @@ const LoadingSpinner = () => (
 async function fetchProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, username, email, current_skill_level, streak_count, total_problems, last_active_date')
+    .select('id, username, current_skill_level, streak_count, total_problems')
     .eq('id', userId)
     .single();
 

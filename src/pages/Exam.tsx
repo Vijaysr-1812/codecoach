@@ -111,6 +111,14 @@ interface ExamData {
   isActive: boolean;
 }
 
+interface ExamSummary {
+  id: string;
+  title: string;
+  description: string;
+  duration: number;
+  totalMarks: number;
+}
+
 interface ExamQuestion {
   id: string;
   title: string;
@@ -152,6 +160,8 @@ export default function ExaminationPage() {
 
   const navigate = useNavigate();
   const [exam, setExam] = useState<ExamData | null>(null);
+  const [availableExams, setAvailableExams] = useState<ExamSummary[]>([]);
+  const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
   const [loadingExam, setLoadingExam] = useState(true);
   const [examError, setExamError] = useState<string | null>(null);
 
@@ -190,30 +200,79 @@ export default function ExaminationPage() {
       setLoadingExam(true);
       setExamError(null);
 
-      const { data: examRow, error: examErr } = await supabase
+      let examRows: any[] | null = null;
+      let examErr: any = null;
+
+      const currentExamQuery = await supabase
         .from('exams')
-        .select('id, title, description, duration_minutes, total_marks')
+        .select('id, title, description, duration, total_marks, created_at')
         .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order('created_at', { ascending: false });
+
+      if (currentExamQuery.error) {
+        const legacyExamQuery = await supabase
+          .from('exams')
+          .select('id, title, description, duration_minutes, total_marks, created_at')
+          .eq('is_active', true)
+          .order('created_at', { ascending: false });
+
+        examRows = legacyExamQuery.data;
+        examErr = legacyExamQuery.error;
+      } else {
+        examRows = currentExamQuery.data;
+        examErr = currentExamQuery.error;
+      }
 
       if (cancelled) return;
 
-      if (examErr || !examRow) {
+      if (examErr || !examRows || examRows.length === 0) {
         setExamError(examErr?.message ?? 'No active exam found. Run the migration in supabase/migrations.');
         setLoadingExam(false);
         return;
       }
 
-      const { data: questions, error: qErr } = await supabase
+      const summaries: ExamSummary[] = examRows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        description: row.description ?? '',
+        duration: row.duration ?? row.duration_minutes ?? 60,
+        totalMarks: row.total_marks ?? 100,
+      }));
+      setAvailableExams(summaries);
+
+      const examRow = examRows.find((row) => row.id === selectedExamId) ?? examRows[0];
+      if (!selectedExamId || selectedExamId !== examRow.id) {
+        setSelectedExamId(examRow.id);
+      }
+
+      let questions: any[] | null = null;
+      let qErr: any = null;
+
+      const currentQuestionQuery = await supabase
         .from('exam_questions')
         .select(`
-          id, title, description, difficulty, marks, position, starter_codes, drivers,
-          exam_test_cases ( id, input, expected_output, position, is_sample )
+          id, title, description, difficulty, marks, position, starter_code, drivers,
+          exam_test_cases ( id, input, expected_output, position, is_hidden )
         `)
         .eq('exam_id', examRow.id)
         .order('position', { ascending: true });
+
+      if (currentQuestionQuery.error) {
+        const legacyQuestionQuery = await supabase
+          .from('exam_questions')
+          .select(`
+            id, title, description, difficulty, marks, position, starter_codes, drivers,
+            exam_test_cases ( id, input, expected_output, position, is_sample )
+          `)
+          .eq('exam_id', examRow.id)
+          .order('position', { ascending: true });
+
+        questions = legacyQuestionQuery.data;
+        qErr = legacyQuestionQuery.error;
+      } else {
+        questions = currentQuestionQuery.data;
+        qErr = currentQuestionQuery.error;
+      }
 
       if (cancelled) return;
 
@@ -227,7 +286,7 @@ export default function ExaminationPage() {
         id: examRow.id,
         title: examRow.title,
         description: examRow.description ?? '',
-        duration: examRow.duration_minutes,
+        duration: examRow.duration ?? examRow.duration_minutes ?? 60,
         totalMarks: examRow.total_marks,
         isActive: true,
         questions: questions.map((q) => {
@@ -240,13 +299,16 @@ export default function ExaminationPage() {
             description: q.description,
             marks: q.marks,
             difficulty: q.difficulty,
-            starterCodes: (q.starter_codes as Record<string, string>) ?? {},
+            starterCodes: ((q.starter_code ?? q.starter_codes) as Record<string, string>) ?? {},
             drivers: (q.drivers as Record<string, string>) ?? {},
             testCases: tcRows.map((tc: { input: string; expected_output: string }) => ({
               input: tc.input,
               expectedOutput: tc.expected_output,
             })),
-            sampleCount: tcRows.filter((tc: { is_sample: boolean }) => tc.is_sample).length || Math.min(2, tcRows.length),
+            sampleCount:
+              tcRows.filter((tc: { is_hidden?: boolean; is_sample?: boolean }) => (
+                typeof tc.is_sample === 'boolean' ? tc.is_sample : !tc.is_hidden
+              )).length || Math.min(2, tcRows.length),
           };
         }),
       };
@@ -261,7 +323,7 @@ export default function ExaminationPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedExamId]);
 
   // Pre-fill answers with language-specific starter code for each question
   useEffect(() => {
@@ -636,6 +698,21 @@ export default function ExaminationPage() {
     }
   };
 
+  useEffect(() => {
+    if (!exam) return;
+    const question = exam.questions[currentQuestionIndex];
+    if (!question) return;
+    const langs = Array.from(
+      new Set([
+        ...Object.keys(question.starterCodes ?? {}),
+        ...Object.keys(question.drivers ?? {}),
+      ]),
+    ).filter((lang) => SUPPORTED_LANGS.includes(lang));
+    if (langs.length > 0 && !langs.includes(language)) {
+      setLanguage(langs[0]);
+    }
+  }, [exam, currentQuestionIndex, language]);
+
   // ---- Render gates ----
   if (isPending || loadingExam) {
     return (
@@ -665,6 +742,13 @@ export default function ExaminationPage() {
 
   const currentQuestion = exam.questions[currentQuestionIndex];
   const sampleCount = Math.min(currentQuestion.sampleCount || 3, currentQuestion.testCases.length);
+  const availableLanguages = Array.from(
+    new Set([
+      ...Object.keys(currentQuestion.starterCodes ?? {}),
+      ...Object.keys(currentQuestion.drivers ?? {}),
+    ]),
+  ).filter((lang) => SUPPORTED_LANGS.includes(lang));
+  const languageOptions = availableLanguages.length > 0 ? availableLanguages : SUPPORTED_LANGS;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 relative">
@@ -730,6 +814,32 @@ export default function ExaminationPage() {
                 <div className="text-center mb-8">
                   <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-green-400 bg-clip-text text-transparent mb-4">{exam.title}</h1>
                   <p className="text-xl text-gray-300 mb-6">{exam.description}</p>
+
+                  {availableExams.length > 1 && (
+                    <div className="max-w-md mx-auto mb-6 text-left">
+                      <label className="block text-sm text-cyan-300 mb-2">Choose Assessment</label>
+                      <select
+                        value={selectedExamId ?? exam.id}
+                        onChange={(event) => {
+                          setSelectedExamId(event.target.value);
+                          setExamState('preview');
+                          setCurrentQuestionIndex(0);
+                          setAnswers({});
+                          setRunnerOutput('');
+                          setTestResults([]);
+                          setQuestionPassStatus({});
+                          setQuestionFirstFailures({});
+                        }}
+                        className="w-full bg-slate-800/70 border border-cyan-500/30 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-400"
+                      >
+                        {availableExams.map((availableExam) => (
+                          <option key={availableExam.id} value={availableExam.id} className="bg-slate-800">
+                            {availableExam.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div className="grid md:grid-cols-3 gap-6 mb-8">
                     <div className="bg-slate-800/40 rounded-xl p-4 border border-cyan-500/20">
@@ -890,10 +1000,11 @@ export default function ExaminationPage() {
                       onChange={(e) => setLanguage(e.target.value)}
                       className="bg-slate-800/50 border border-cyan-500/30 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-400"
                     >
-                      <option value="python" className="bg-slate-800">Python</option>
-                      <option value="java" className="bg-slate-800">Java</option>
-                      <option value="cpp" className="bg-slate-800">C++</option>
-                      <option value="javascript" className="bg-slate-800">JavaScript</option>
+                      {languageOptions.map((lang) => (
+                        <option key={lang} value={lang} className="bg-slate-800">
+                          {lang === 'cpp' ? 'C++' : lang === 'javascript' ? 'JavaScript' : lang[0].toUpperCase() + lang.slice(1)}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>

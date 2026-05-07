@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { updateRoadmapProgress } from '@/lib/roadmapProgress';
 import {
   chatWithAI, generateProblem, getProgressiveHint,
   reviewCode, generateVivaQuestions, getAIErrorMessage,
@@ -65,6 +66,40 @@ function findRoadmapNode(id: string): RoadmapNode | null {
   return null;
 }
 
+function flattenRoadmapNodes(): RoadmapNode[] {
+  const out: RoadmapNode[] = [];
+  const walk = (nodes: RoadmapNode[]) => {
+    for (const node of nodes) {
+      out.push(node);
+      if (node.children?.length) walk(node.children);
+    }
+  };
+  for (const level of Object.keys(ROADMAP_DATA)) {
+    walk(ROADMAP_DATA[level]);
+  }
+  return out;
+}
+
+function findNextRoadmapNode(id: string): RoadmapNode | null {
+  const nodes = flattenRoadmapNodes().filter((node) => Boolean(node.problem));
+  const index = nodes.findIndex((node) => node.id === id);
+  return index >= 0 ? nodes[index + 1] ?? null : null;
+}
+
+function normalizeOutput(value: string): string {
+  const lastMeaningfulLine = value
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) ?? '';
+
+  return lastMeaningfulLine
+    .replace(/^['"]|['"]$/g, '')
+    .trim()
+    .toLowerCase();
+}
+
 function roadmapNodeToAIProblem(node: RoadmapNode, language: string): AIProblem | null {
   if (!node.problem) return null;
   const p = node.problem;
@@ -94,6 +129,8 @@ export default function PracticePage() {
   const [stdin, setStdin] = useState('');
   const [output, setOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  const [isSolved, setIsSolved] = useState(false);
+  const [nextTopicId, setNextTopicId] = useState<string | null>(null);
 
   // ── Problem state
   const [problem, setProblem] = useState<AIProblem | null>(null);
@@ -211,6 +248,8 @@ export default function PracticePage() {
   const handleRunCode = async () => {
     if (!code.trim()) { toast.error('Write some code first!'); return; }
     setIsRunning(true);
+    setIsSolved(false);
+    setNextTopicId(null);
     setOutput('⏳ Running your code…\n');
     setReview(null);
 
@@ -244,9 +283,32 @@ export default function PracticePage() {
       setOutput(out);
 
       if (session?.user && data.stdout) {
-        await supabase.from('profiles')
-          .update({ total_problems: (profile?.total_problems ?? 0) + 1 })
-          .eq('id', session.user.id);
+        const actualOutput = data.stdout;
+        const expectedOutput = problem?.testCases?.[0]?.output;
+        const solvedRoadmapChallenge =
+          Boolean(topicIdParam && expectedOutput) &&
+          normalizeOutput(actualOutput) === normalizeOutput(expectedOutput);
+
+        if (solvedRoadmapChallenge) {
+          setIsSolved(true);
+          console.log('Practice roadmap update starting', { topicId: topicIdParam });
+          await updateRoadmapProgress(session.user.id, topicIdParam);
+          console.log('Practice roadmap update finished', { topicId: topicIdParam });
+          const nextNode = findNextRoadmapNode(topicIdParam);
+          setNextTopicId(nextNode?.id ?? null);
+
+          await supabase.from('profiles')
+            .update({ total_problems: (profile?.total_problems ?? 0) + 1 })
+            .eq('id', session.user.id);
+
+          if (nextNode) {
+            toast.success(`Success! Loading next question: ${nextNode.title}`);
+            navigate(`/practice?topicId=${nextNode.id}`, { replace: true });
+          } else {
+            toast.success('Success! Roadmap completed.');
+            navigate('/roadmap', { replace: true });
+          }
+        }
       }
     } catch (e: unknown) {
       setOutput('⚠️ Could not reach execution server. Check your API key or network.');
@@ -479,6 +541,11 @@ export default function PracticePage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3 pb-3">
+              {isSolved && (
+                <div className="rounded-md border border-green-500/40 bg-green-500/10 px-3 py-2 text-sm font-medium text-green-300">
+                  {nextTopicId ? 'Success! Loading next question...' : 'Success! Roadmap completed.'}
+                </div>
+              )}
               <Textarea
                 value={code}
                 onChange={e => setCode(e.target.value)}
@@ -506,6 +573,15 @@ export default function PracticePage() {
                   ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Running…</>
                   : <><Play className="w-4 h-4 mr-2" />▶ Run Code</>}
               </Button>
+              {isSolved && (
+                <Button
+                  onClick={() => navigate(nextTopicId ? `/practice?topicId=${nextTopicId}` : '/roadmap')}
+                  variant="outline"
+                  className="w-full border-green-500/40 bg-green-500/10 text-green-300 hover:bg-green-500/20 hover:text-white"
+                >
+                  {nextTopicId ? 'Next Question' : 'Back to Roadmap'}
+                </Button>
+              )}
             </CardContent>
           </Card>
 

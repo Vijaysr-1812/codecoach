@@ -48,7 +48,7 @@ const Leaderboard = () => {
           score,
           speed,
           efficiency,
-          completed_at,
+          created_at,
           profiles ( username )
         `)
         .order('score', { ascending: false })
@@ -78,7 +78,7 @@ const Leaderboard = () => {
           score: row.score,
           speed: row.speed,
           efficiency: row.efficiency,
-          completed_at: row.completed_at,
+          completed_at: row.created_at,
         }));
 
       setLeaderboard(ranked);
