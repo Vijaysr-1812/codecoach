@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
-import { generateRoadmap } from '@/lib/gemini';
+import { generateRoadmap, getAIErrorMessage } from '@/lib/gemini';
 
 import {
   Code2,
@@ -30,7 +30,6 @@ interface MotionProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const motion = {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   div: ({ children, className, initial, animate, exit, ...props }: MotionProps) => (
     <div className={className} {...props}>
       {children}
@@ -38,7 +37,6 @@ const motion = {
   ),
 };
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const AnimatePresence = ({ children, mode }: { children: React.ReactNode; mode?: string }) => <>{children}</>;
 
 interface CodeEditorProps {
@@ -372,7 +370,7 @@ export default function ExaminationPage() {
                 roadmap_json: roadmap,
               });
             })
-            .catch((err) => console.error('Roadmap generation failed:', err));
+            .catch((err) => console.error('Roadmap generation failed:', getAIErrorMessage(err), err));
         }
 
         const { data: currentProfile } = await supabase
@@ -585,8 +583,8 @@ export default function ExaminationPage() {
         }
         const actualOutput = (result.stdout || result.stderr || '').trim();
         const expectedOutput = testCase.expectedOutput.trim();
-        // eslint-disable-next-line eqeqeq
-        const passed = actualOutput == expectedOutput;
+        
+        const passed = actualOutput === expectedOutput;
 
         if (!passed) allPassed = false;
 

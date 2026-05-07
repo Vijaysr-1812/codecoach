@@ -4,6 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 //  Client setup
 // ─────────────────────────────────────────────
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+const MODEL_NAME = 'gemini-2.5-flash';
 
 let genAI: GoogleGenerativeAI | null = null;
 
@@ -16,7 +17,26 @@ function getClient() {
 }
 
 function getModel() {
-  return getClient().getGenerativeModel({ model: 'gemini-2.0-flash' });
+  return getClient().getGenerativeModel({ model: MODEL_NAME });
+}
+
+function getRawErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try { return JSON.stringify(error); } catch { return 'Unknown error'; }
+}
+
+export function getAIErrorMessage(error: unknown): string {
+  const message = getRawErrorMessage(error);
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes('vite_gemini_api_key')) return 'Please add your Gemini API key to .env as VITE_GEMINI_API_KEY.';
+  if (normalized.includes('quota') || normalized.includes('[429') || normalized.includes('resource_exhausted')) return `Gemini quota exceeded for ${MODEL_NAME}. Wait for quota reset, enable billing/increase quota in Google AI Studio, or use a different Gemini API key/project.`;
+  if (normalized.includes('api key not valid') || normalized.includes('api_key_invalid') || normalized.includes('[400') || normalized.includes('[403')) return 'Gemini API key was rejected. Check that VITE_GEMINI_API_KEY is correct and allowed for the Gemini API.';
+  if (normalized.includes('failed to fetch') || normalized.includes('network')) return 'Could not reach Gemini. Check your internet connection and try again.';
+  if (normalized.includes('[503') || normalized.includes('overloaded') || normalized.includes('unavailable')) return 'Gemini is temporarily unavailable. Try again in a minute.';
+
+  return `AI request failed: ${message}`;
 }
 
 // ─────────────────────────────────────────────
@@ -78,7 +98,65 @@ export interface RoadmapSubmissionContext {
 }
 
 // ─────────────────────────────────────────────
-//  1. CONTEXTUAL CHAT
+//  Helpers Ported From Your Express Server
+// ─────────────────────────────────────────────
+function detectWantsCode(prompt: string) {
+  return /code|solution|implement|write/i.test(prompt);
+}
+
+function isPlaceholderCode(code: string) {
+  return /hello|codelab|hello world/i.test(code || "");
+}
+
+function buildSystemPrompt() {
+  return [
+    "CRITICAL INSTRUCTION:",
+    "If a Problem section is provided:",
+    "- You MUST base your answer ONLY on the Problem section",
+    "- You MUST IGNORE the Code section completely if it contains placeholder code like:",
+    "  'Hello CodeLab', 'Hello World', or similar starter code",
+    "- You MUST NOT explain the code if a valid problem exists",
+    "- You MUST NOT ask for the problem again",
+    "- You MUST always explain the problem first",
+    "",
+    "If you violate this, your answer is incorrect.",
+    "",
+    "You are a coding mentor helping students learn problem solving.",
+    "Your job is to teach, not just answer.",
+    "Responses must be concise, clear, and student-friendly.",
+    "Avoid long paragraphs.",
+    "Use bullets where helpful.",
+    "Each section must stay within 6 to 8 lines maximum.",
+    "Always explain the logic first.",
+    "You MUST base your answer on the provided Problem section.",
+    "Always use the provided problem context.",
+    "If problem is provided, NEVER ask for it again.",
+    "If Problem exists, IGNORE placeholder code such as 'Hello CodeLab', 'Hello World', or generic starter code unless the user explicitly asks about that code.",
+    "Always explain the actual problem first, not placeholder code.",
+    "If code is provided, you must analyze and reference that code directly.",
+    "If execution output is provided, use it to explain bugs, mismatches, or runtime issues.",
+    "Always give short hints and learning guidance.",
+    "Only provide full code if the user explicitly asks for code, solution, implement, or write.",
+    "If the user does not explicitly ask for code, do not include code.",
+    "If the user asks for hints, do not provide a complete solution.",
+    "Keep the response focused on the current problem only.",
+    "Every response must follow this exact structure:",
+    "Explanation:",
+    "(short explanation)",
+    "",
+    "Approach:",
+    "(step-by-step, concise)",
+    "",
+    "Code:",
+    "(include code only when explicitly requested; otherwise write exactly: 'Code not provided because you did not ask.')",
+    "",
+    "Tips:",
+    "(short, useful hints, edge cases, learning advice)",
+  ].join("\n");
+}
+
+// ─────────────────────────────────────────────
+//  1. CONTEXTUAL CHAT (WITH STRICT NODE.JS LOGIC)
 // ─────────────────────────────────────────────
 export async function chatWithAI(
   userMessage: string,
@@ -87,47 +165,75 @@ export async function chatWithAI(
     currentCode: string;
     language: string;
     chatHistory: { role: 'user' | 'model'; parts: string }[];
+    output?: string;
   }
 ): Promise<string> {
-  const model = getModel();
+  try {
+    const model = getModel();
+    const systemContext = buildSystemPrompt();
 
-  const systemContext = `
-You are CodeCoach AI, an expert coding mentor helping students learn programming.
-Your tone is encouraging, concise, and educational.
+    const wantsCode = detectWantsCode(userMessage);
+    const hasProblem = Boolean(context.currentProblem);
+    const placeholderCode = isPlaceholderCode(context.currentCode);
+    const filteredCode = hasProblem && placeholderCode ? "" : context.currentCode;
 
-CURRENT CONTEXT:
-- Language: ${context.language}
-- Problem: ${context.currentProblem?.title ?? 'None selected'}
-- Problem Description: ${context.currentProblem?.description ?? 'N/A'}
-- Student's Current Code:
-\`\`\`${context.language}
-${context.currentCode || '(empty)'}
-\`\`\`
+    const formattedUserInput = [
+      "=== PROBLEM (HIGHEST PRIORITY) ===",
+      context.currentProblem ? `Title: ${context.currentProblem.title}\nDescription: ${context.currentProblem.description}` : "No problem context provided.",
+      "",
+      "=== USER REQUEST ===",
+      userMessage,
+      "",
+      "=== CODE (LOW PRIORITY - IGNORE IF PLACEHOLDER) ===",
+      filteredCode?.trim() ? `\`\`\`${context.language}\n${filteredCode}\n\`\`\`` : "No code provided.",
+      "",
+      "=== OUTPUT ===",
+      context.output?.trim() ? `\`\`\`\n${context.output}\n\`\`\`` : "No output provided.",
+      "",
+      "Rules for this reply:",
+      "- Use the provided Problem section automatically.",
+      "- Do not ask for the problem again.",
+      "- If Problem exists, prioritize it over placeholder starter code.",
+      "- Explain logic first.",
+      "- Keep the answer concise.",
+      wantsCode
+        ? "- The user explicitly asked for code, so code is allowed."
+        : "- The user did not explicitly ask for code, so write exactly: Code not provided because you did not ask.",
+    ].join("\n");
 
-INSTRUCTIONS:
-- If asked about hints, give ONE hint at a time — don't reveal the full solution.
-- If asked to debug, point to the specific line or logic issue.
-- Format code with proper markdown code blocks.
-- Keep responses under 200 words unless a detailed explanation is needed.
-- If the student asks for a new problem, say "Click the 🎯 Generate Problem button to get a fresh one!"
-`.trim();
+    let safeHistory = context.chatHistory
+      .filter(h => h.parts && h.parts.trim() !== '')
+      .map(h => ({
+        role: h.role,
+        parts: [{ text: h.parts }],
+      }));
 
-  // Drop leading model messages — Gemini requires history to start with 'user'
-  const firstUserIdx = context.chatHistory.findIndex(h => h.role === 'user');
-  const trimmed = firstUserIdx >= 0 ? context.chatHistory.slice(firstUserIdx) : [];
+    const firstUserIdx = safeHistory.findIndex(h => h.role === 'user');
+    if (firstUserIdx > 0) {
+      safeHistory = safeHistory.slice(firstUserIdx);
+    } else if (firstUserIdx === -1) {
+      safeHistory = []; 
+    }
 
-  const history = trimmed.map(h => ({
-    role: h.role,
-    parts: [{ text: h.parts }],
-  }));
+    if (!userMessage || userMessage.trim() === '') {
+      throw new Error("Message cannot be empty.");
+    }
 
-  const chat = model.startChat({
-    history,
-    systemInstruction: { parts: [{ text: systemContext }] },
-  });
+    const chat = model.startChat({
+      history: safeHistory,
+      systemInstruction: {
+        role: 'system',
+        parts: [{ text: systemContext }]
+      },
+    });
 
-  const result = await chat.sendMessage(userMessage);
-  return result.response.text();
+    const result = await chat.sendMessage([{ text: formattedUserInput }]);
+    return result.response.text();
+
+  } catch (error: unknown) {
+    console.error("=== CODECOACH CHAT API ERROR ===", error);
+    throw error;
+  }
 }
 
 // ─────────────────────────────────────────────

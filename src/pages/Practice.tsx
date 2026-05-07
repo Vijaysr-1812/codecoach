@@ -11,15 +11,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import {
   ArrowLeft, Send, Play, Brain, Terminal, Code, Lightbulb,
-  RefreshCw, Star, Mic, BookOpen, Loader2, ChevronRight,
-  Zap, Shield, Eye
+  RefreshCw, Star, Mic, Loader2, ChevronRight,
+  Shield, Eye
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import {
   chatWithAI, generateProblem, getProgressiveHint,
-  reviewCode, generateVivaQuestions,
+  reviewCode, generateVivaQuestions, getAIErrorMessage,
   type AIProblem, type CodeReview, type VivaQuestion
 } from '@/lib/gemini';
 
@@ -47,7 +47,6 @@ const ONECOMPILER_LANG: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────────────────
-// Walk every level's roadmap tree to find a node by id.
 function findRoadmapNode(id: string): RoadmapNode | null {
   const walk = (nodes: RoadmapNode[]): RoadmapNode | null => {
     for (const n of nodes) {
@@ -66,7 +65,6 @@ function findRoadmapNode(id: string): RoadmapNode | null {
   return null;
 }
 
-// Convert a RoadmapNode (with its PracticeProblem) into the AIProblem shape Practice expects.
 function roadmapNodeToAIProblem(node: RoadmapNode, language: string): AIProblem | null {
   if (!node.problem) return null;
   const p = node.problem;
@@ -131,19 +129,16 @@ export default function PracticePage() {
   // ── Active tab
   const [activeTab, setActiveTab] = useState('chat');
 
-  // Auto-scroll chat
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, isChatLoading]);
 
-  // Set starter code when language changes
   useEffect(() => {
     if (problem?.starterCode?.[language]) {
       setCode(problem.starterCode[language]);
     }
   }, [language, problem]);
 
-  // If arriving from the roadmap with ?topicId=..., preload that challenge.
   const topicIdParam = searchParams.get('topicId');
   useEffect(() => {
     if (!topicIdParam) return;
@@ -175,8 +170,7 @@ export default function PracticePage() {
       },
     ]);
     toast.success(`Loaded: ${aiProblem.title}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topicIdParam]);
+  }, [topicIdParam, language, searchParams]);
 
   // ─────────────────────────────────────────────────────────
   //  Generate Problem
@@ -197,7 +191,6 @@ export default function PracticePage() {
       setActiveTab('chat');
       toast.success(`✅ "${p.title}" is ready!`);
 
-      // Announce in chat
       setChatHistory(prev => [
         ...prev,
         {
@@ -205,8 +198,8 @@ export default function PracticePage() {
           parts: `🎯 New **${p.difficulty}** problem loaded: **${p.title}**\n\n${p.description}\n\nWhenever you're ready, click ▶️ **Run Code** or ask me for a hint!`,
         },
       ]);
-    } catch (e: any) {
-      toast.error('AI error: ' + (e.message ?? 'Unknown error'));
+    } catch (e: unknown) {
+      toast.error(getAIErrorMessage(e));
     } finally {
       setIsGenerating(false);
     }
@@ -250,13 +243,12 @@ export default function PracticePage() {
       const out = data.stdout || data.stderr || '(No output)';
       setOutput(out);
 
-      // Update total_problems in Supabase
       if (session?.user && data.stdout) {
         await supabase.from('profiles')
           .update({ total_problems: (profile?.total_problems ?? 0) + 1 })
           .eq('id', session.user.id);
       }
-    } catch {
+    } catch (e: unknown) {
       setOutput('⚠️ Could not reach execution server. Check your API key or network.');
     } finally {
       setIsRunning(false);
@@ -281,12 +273,11 @@ export default function PracticePage() {
         currentCode: code,
         language,
         chatHistory,
+        output, // Passes the terminal execution output to Gemini to debug errors
       });
       setChatHistory(prev => [...prev, { role: 'model', parts: reply }]);
-    } catch (e: any) {
-      const errMsg = e.message?.includes('VITE_GEMINI_API_KEY')
-        ? '⚠️ Please add your Gemini API key to .env (VITE_GEMINI_API_KEY)'
-        : '⚠️ AI error: ' + (e.message ?? 'Unknown');
+    } catch (e: unknown) {
+      const errMsg = getAIErrorMessage(e);
       setChatHistory(prev => [...prev, { role: 'model', parts: errMsg }]);
     } finally {
       setIsChatLoading(false);
@@ -305,8 +296,8 @@ export default function PracticePage() {
       const h = await getProgressiveHint(hintLevel, problem, code, language);
       setHint(h);
       if (hintLevel < 3) setHintLevel(prev => (prev + 1) as HintLevel);
-    } catch (e: any) {
-      toast.error('Hint error: ' + e.message);
+    } catch (e: unknown) {
+      toast.error(getAIErrorMessage(e));
     } finally {
       setIsHinting(false);
     }
@@ -324,8 +315,8 @@ export default function PracticePage() {
     try {
       const r = await reviewCode(code, language, problem, output);
       setReview(r);
-    } catch (e: any) {
-      toast.error('Review error: ' + e.message);
+    } catch (e: unknown) {
+      toast.error(getAIErrorMessage(e));
     } finally {
       setIsReviewing(false);
     }
@@ -344,16 +335,13 @@ export default function PracticePage() {
     try {
       const qs = await generateVivaQuestions(code, language, problem);
       setVivaQuestions(qs);
-    } catch (e: any) {
-      toast.error('Viva error: ' + e.message);
+    } catch (e: unknown) {
+      toast.error(getAIErrorMessage(e));
     } finally {
       setIsViva(false);
     }
   };
 
-  // ─────────────────────────────────────────────────────────
-  //  Helpers
-  // ─────────────────────────────────────────────────────────
   const scoreColor = (n: number) =>
     n >= 8 ? 'text-green-400' : n >= 5 ? 'text-yellow-400' : 'text-red-400';
 
@@ -371,15 +359,10 @@ export default function PracticePage() {
     c: 'bg-[#1e1e1e] text-[#9cdcfe] border-[#3c3c3c]',
   };
 
-  // ─────────────────────────────────────────────────────────
-  //  Render
-  // ─────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 relative overflow-hidden">
-      {/* Background grid */}
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(0,255,204,0.08)_1px,transparent_0)] bg-[length:24px_24px]" />
 
-      {/* ── Header ── */}
       <header className="relative z-10 border-b border-cyan-500/20 bg-slate-900/40 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -403,13 +386,10 @@ export default function PracticePage() {
       </header>
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-4 space-y-4">
-
-        {/* ── Problem Generator Controls ── */}
         <Card className="bg-slate-900/50 border-cyan-500/20">
           <CardContent className="py-3">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-sm text-gray-400 font-medium">Generate Problem:</span>
-
               <Select value={difficulty} onValueChange={v => setDifficulty(v as Difficulty)}>
                 <SelectTrigger className="w-28 h-8 bg-slate-800/50 border-cyan-500/30 text-white text-sm">
                   <SelectValue />
@@ -460,7 +440,6 @@ export default function PracticePage() {
           </CardContent>
         </Card>
 
-        {/* ── Problem Statement ── */}
         {problem && (
           <Card className="bg-slate-900/40 border-cyan-500/20">
             <CardHeader className="pb-2 pt-3">
@@ -474,24 +453,11 @@ export default function PracticePage() {
               <pre className="bg-slate-950 p-3 rounded text-xs text-green-400 font-mono border border-cyan-500/20 whitespace-pre-wrap">
                 {problem.examples}
               </pre>
-              {problem.testCases?.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {problem.testCases.map((tc, i) => (
-                    <div key={i} className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-gray-300">
-                      <span className="text-cyan-400">In:</span> {tc.input}
-                      <span className="text-cyan-400 ml-2">→ Out:</span> {tc.output}
-                    </div>
-                  ))}
-                </div>
-              )}
             </CardContent>
           </Card>
         )}
 
-        {/* ── Main Grid: Editor + AI Panel ── */}
         <div className="grid lg:grid-cols-5 gap-4">
-
-          {/* ── Code Editor (3/5) ── */}
           <Card className="lg:col-span-3 bg-slate-900/40 border-cyan-500/20">
             <CardHeader className="pb-2 pt-3">
               <div className="flex items-center justify-between">
@@ -520,7 +486,6 @@ export default function PracticePage() {
                 placeholder="Write your code here…"
                 spellCheck={false}
               />
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <p className="text-xs text-gray-400 mb-1">Input (stdin)</p>
@@ -535,7 +500,6 @@ export default function PracticePage() {
                   </div>
                 </div>
               </div>
-
               <Button onClick={handleRunCode} disabled={isRunning}
                 className="w-full bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600">
                 {isRunning
@@ -545,7 +509,6 @@ export default function PracticePage() {
             </CardContent>
           </Card>
 
-          {/* ── AI Panel (2/5) ── */}
           <Card className="lg:col-span-2 bg-slate-900/40 border-cyan-500/20">
             <CardHeader className="pb-2 pt-3">
               <CardTitle className="flex items-center gap-2 text-white text-base">
@@ -561,7 +524,6 @@ export default function PracticePage() {
                   <TabsTrigger value="viva"   className="text-xs flex-1">🎓 Viva</TabsTrigger>
                 </TabsList>
 
-                {/* ── Chat Tab ── */}
                 <TabsContent value="chat" className="mt-0 space-y-2">
                   <div className="h-72 overflow-y-auto space-y-2 pr-1">
                     {chatHistory.map((msg, i) => (
@@ -599,107 +561,45 @@ export default function PracticePage() {
                       <Send className="w-3 h-3" />
                     </Button>
                   </div>
-                  {/* Quick Actions */}
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {['Explain the problem', 'Debug my code', 'Suggest improvements'].map(q => (
-                      <button key={q} onClick={() => handleSendChat(q)}
-                        className="text-[10px] px-2 py-0.5 rounded border border-cyan-500/20 text-cyan-400
-                          hover:bg-cyan-500/10 transition-colors">
-                        {q}
-                      </button>
-                    ))}
-                  </div>
                 </TabsContent>
 
-                {/* ── Hints Tab ── */}
                 <TabsContent value="hints" className="mt-0 space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-gray-400">Progressive hints — each level reveals more detail</p>
+                    <p className="text-xs text-gray-400">Progressive hints</p>
                     <div className="flex gap-1">
                       {([1, 2, 3] as HintLevel[]).map(l => (
                         <span key={l} className={`text-[10px] px-2 py-0.5 rounded border ${
-                          hintLevel > l
-                            ? 'border-green-500/40 bg-green-500/10 text-green-400'
-                            : hintLevel === l
-                            ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400'
-                            : 'border-slate-700 text-slate-500'
-                        }`}>
-                          L{l}
-                        </span>
+                          hintLevel > l ? 'border-green-500/40 bg-green-500/10 text-green-400' : 'border-slate-700 text-slate-500'
+                        }`}>L{l}</span>
                       ))}
                     </div>
                   </div>
-
                   <div className="flex gap-2">
                     {([
                       { level: 1, label: '💡 Concept', desc: 'What to use' },
                       { level: 2, label: '🗺 Approach', desc: 'How to think' },
                       { level: 3, label: '📝 Pseudocode', desc: 'Step by step' },
                     ] as { level: HintLevel; label: string; desc: string }[]).map(h => (
-                      <button key={h.level}
-                        onClick={() => { setHintLevel(h.level); handleGetHint(); }}
-                        disabled={isHinting}
-                        className={`flex-1 rounded-lg border p-2 text-center transition-all text-xs ${
-                          hintLevel === h.level
-                            ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
-                            : 'border-slate-700 text-slate-400 hover:border-slate-500'
-                        }`}>
-                        <div className="font-medium">{h.label}</div>
-                        <div className="text-[10px] text-gray-500 mt-0.5">{h.desc}</div>
+                      <button key={h.level} onClick={() => { setHintLevel(h.level); handleGetHint(); }}
+                        disabled={isHinting} className="flex-1 rounded-lg border p-2 text-center text-xs">
+                        {h.label}
                       </button>
                     ))}
                   </div>
-
-                  {isHinting && (
-                    <div className="flex items-center gap-2 text-cyan-400 text-xs">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Gemini thinking…
-                    </div>
-                  )}
-
                   {hint && !isHinting && (
-                    <div className="bg-slate-800/50 border border-yellow-500/20 rounded-lg p-3 text-xs text-gray-300 whitespace-pre-wrap">
-                      <div className="flex items-center gap-1 mb-1 text-yellow-400 font-medium">
-                        <Lightbulb className="w-3 h-3" />
-                        Level {hintLevel === 1 ? 1 : hintLevel - 1} Hint
-                      </div>
+                    <div className="bg-slate-800/50 border border-yellow-500/20 rounded-lg p-3 text-xs text-gray-300">
                       {hint}
                     </div>
                   )}
-
-                  {!problem && (
-                    <p className="text-xs text-gray-500 text-center pt-4">
-                      Generate a problem first to unlock hints.
-                    </p>
-                  )}
                 </TabsContent>
 
-                {/* ── Review Tab ── */}
                 <TabsContent value="review" className="mt-0 space-y-3">
-                  {!review && !isReviewing && (
-                    <div className="text-center py-8 space-y-3">
-                      <Shield className="w-10 h-10 text-purple-400 mx-auto opacity-50" />
-                      <p className="text-xs text-gray-500">Run your code first, then click<br /><strong className="text-purple-300">AI Review</strong> to get Gemini's analysis.</p>
-                      <Button onClick={handleReview} size="sm"
-                        className="bg-purple-600/30 border border-purple-500/30 text-purple-300 hover:bg-purple-600/50">
-                        <Eye className="w-3 h-3 mr-1" /> Review My Code
-                      </Button>
-                    </div>
-                  )}
-
-                  {isReviewing && (
-                    <div className="flex flex-col items-center gap-2 py-8 text-purple-400">
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                      <p className="text-xs">Gemini is reading your code…</p>
-                    </div>
-                  )}
-
-                  {review && !isReviewing && (
+                  {review && (
                     <div className="space-y-3">
-                      {/* Score Bars */}
                       {[
-                        { label: 'Code Quality',    value: review.quality,     color: 'bg-cyan-500' },
-                        { label: 'Efficiency',       value: review.efficiency,  color: 'bg-green-500' },
-                        { label: 'Readability',      value: review.readability, color: 'bg-purple-500' },
+                        { label: 'Quality', value: review.quality },
+                        { label: 'Efficiency', value: review.efficiency },
+                        { label: 'Readability', value: review.readability },
                       ].map(s => (
                         <div key={s.label}>
                           <div className="flex justify-between text-xs mb-1">
@@ -709,82 +609,23 @@ export default function PracticePage() {
                           <Progress value={s.value * 10} className="h-1.5" />
                         </div>
                       ))}
-
-                      {/* Complexity */}
-                      <div className="flex gap-2">
-                        <div className="flex-1 bg-slate-800 rounded p-2 text-center">
-                          <div className="text-[10px] text-gray-500">Time</div>
-                          <div className="text-xs font-mono text-cyan-400">{review.timeComplexity}</div>
-                        </div>
-                        <div className="flex-1 bg-slate-800 rounded p-2 text-center">
-                          <div className="text-[10px] text-gray-500">Space</div>
-                          <div className="text-xs font-mono text-green-400">{review.spaceComplexity}</div>
-                        </div>
-                      </div>
-
-                      {/* Feedback */}
                       <div className="bg-slate-800/50 rounded-lg p-2 text-xs text-gray-300">
-                        <div className="font-medium text-white mb-1">Overall Feedback</div>
                         {review.feedback}
-                      </div>
-
-                      {/* Suggestions */}
-                      <div className="space-y-1">
-                        <div className="text-xs font-medium text-white">Suggestions</div>
-                        {review.suggestions.map((s, i) => (
-                          <div key={i} className="flex items-start gap-1.5 text-xs text-gray-400">
-                            <ChevronRight className="w-3 h-3 text-cyan-400 mt-0.5 shrink-0" />
-                            {s}
-                          </div>
-                        ))}
                       </div>
                     </div>
                   )}
                 </TabsContent>
 
-                {/* ── Viva Tab ── */}
                 <TabsContent value="viva" className="mt-0 space-y-3">
-                  {!vivaQuestions.length && !isViva && (
-                    <div className="text-center py-8 space-y-3">
-                      <Mic className="w-10 h-10 text-amber-400 mx-auto opacity-50" />
-                      <p className="text-xs text-gray-500">Once you've solved the problem,<br />click <strong className="text-amber-300">Viva</strong> to test your understanding.</p>
-                      <Button onClick={handleViva} size="sm"
-                        className="bg-amber-600/30 border border-amber-500/30 text-amber-300 hover:bg-amber-600/50">
-                        <Mic className="w-3 h-3 mr-1" /> Start Viva
-                      </Button>
+                  {vivaQuestions.map((q, i) => (
+                    <div key={i} className="bg-slate-800/50 border border-amber-500/20 rounded-lg p-3 space-y-2">
+                      <p className="text-xs text-white font-medium">{q.question}</p>
+                      <button onClick={() => setRevealedHints(prev => new Set([...prev, i]))}
+                        className="text-[10px] text-amber-400">
+                        {revealedHints.has(i) ? q.hint : 'Reveal hint'}
+                      </button>
                     </div>
-                  )}
-
-                  {isViva && (
-                    <div className="flex flex-col items-center gap-2 py-8 text-amber-400">
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                      <p className="text-xs">Crafting viva questions…</p>
-                    </div>
-                  )}
-
-                  {vivaQuestions.length > 0 && !isViva && (
-                    <div className="space-y-3">
-                      <p className="text-xs text-gray-500">Answer these out loud to solidify your understanding:</p>
-                      {vivaQuestions.map((q, i) => (
-                        <div key={i} className="bg-slate-800/50 border border-amber-500/20 rounded-lg p-3 space-y-2">
-                          <div className="flex items-start gap-2">
-                            <Star className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
-                            <p className="text-xs text-white font-medium">{q.question}</p>
-                          </div>
-                          <button
-                            onClick={() => setRevealedHints(prev => new Set([...prev, i]))}
-                            className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1">
-                            <Lightbulb className="w-3 h-3" />
-                            {revealedHints.has(i) ? q.hint : 'Reveal hint'}
-                          </button>
-                        </div>
-                      ))}
-                      <Button onClick={handleViva} variant="outline" size="sm"
-                        className="w-full border-amber-500/30 text-amber-300 hover:bg-amber-500/10 text-xs">
-                        <RefreshCw className="w-3 h-3 mr-1" /> Generate New Questions
-                      </Button>
-                    </div>
-                  )}
+                  ))}
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -796,19 +637,6 @@ export default function PracticePage() {
             <ArrowLeft className="w-3 h-3 mr-1" /> Back to Home
           </Button>
         </div>
-
-        {/* Helpful overlay when topicId is in URL but the node wasn't found / has no challenge */}
-        {topicIdParam && !problem && (
-          <div className="fixed bottom-4 right-4 z-20 max-w-xs rounded-lg border border-yellow-500/30 bg-slate-900/90 backdrop-blur-md p-3 text-xs text-yellow-300 shadow-lg">
-            Couldn't load <span className="font-mono">{topicIdParam}</span> from the roadmap.
-            Try generating a fresh problem instead.
-          </div>
-        )}
-        {topicIdParam && problem && (
-          <div className="fixed bottom-4 right-4 z-20 max-w-xs rounded-lg border border-cyan-500/30 bg-slate-900/90 backdrop-blur-md p-3 text-xs text-cyan-300 shadow-lg">
-            ✅ Loaded from roadmap: <span className="font-semibold text-white">{problem.title}</span>
-          </div>
-        )}
       </div>
     </div>
   );
